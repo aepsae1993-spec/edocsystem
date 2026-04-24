@@ -1,19 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase'
 
-type Params = { params: { id: string } }
+type TeacherRow = {
+  id: string
+  name: string
+  department: string
+  line_user_id: string
+  drive_folder_id: string
+}
 
-export async function PUT(req: NextRequest, { params }: Params) {
+export async function PUT(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   try {
+    const { id: originalId } = await params
     const body = await req.json()
     const db = createServiceClient()
 
-    // ถ้า ID เปลี่ยน ต้อง delete + insert (Supabase ไม่ support update PK)
-    if (body.id && body.id !== params.id) {
-      const { data: old } = await db.from('teachers').select('*').eq('id', params.id).single()
+    if (body.id && body.id !== originalId) {
+      const { data: old } = await db.from('teachers').select('*').eq('id', originalId).single()
       if (!old) return NextResponse.json({ success: false, message: 'ไม่พบบุคลากร' }, { status: 404 })
-      await db.from('teachers').delete().eq('id', params.id)
-      await db.from('teachers').insert({ ...old, ...body })
+      await db.from('teachers').delete().eq('id', originalId)
+      await db.from('teachers').insert({ ...(old as unknown as TeacherRow), ...body })
     } else {
       const { error } = await db.from('teachers').update({
         name: body.name,
@@ -21,7 +30,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
         line_user_id: body.line_user_id || '',
         drive_folder_id: body.drive_folder_id || '',
         updated_at: new Date().toISOString(),
-      }).eq('id', params.id)
+      }).eq('id', originalId)
       if (error) throw new Error(error.message)
     }
 
@@ -31,10 +40,14 @@ export async function PUT(req: NextRequest, { params }: Params) {
   }
 }
 
-export async function DELETE(_: NextRequest, { params }: Params) {
+export async function DELETE(
+  _: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   try {
+    const { id } = await params
     const db = createServiceClient()
-    const { error } = await db.from('teachers').delete().eq('id', params.id)
+    const { error } = await db.from('teachers').delete().eq('id', id)
     if (error) throw new Error(error.message)
     return NextResponse.json({ success: true, message: 'ลบบุคลากรเรียบร้อยแล้ว' })
   } catch (e: unknown) {
