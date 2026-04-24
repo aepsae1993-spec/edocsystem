@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase'
 
+type SettingRow = { key: string; value: string }
+
 export async function GET() {
   const db = createServiceClient()
-  const { data, error } = await db.from('settings').select('*')
+  const { data, error } = await db.from('settings').select('key, value')
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  // แปลงเป็น object เพื่อสะดวกใช้ใน client
   const obj: Record<string, string> = {}
-  for (const row of data || []) obj[row.key] = row.value
+  for (const row of ((data ?? []) as unknown as SettingRow[])) {
+    obj[row.key] = row.value
+  }
   return NextResponse.json(obj)
 }
 
