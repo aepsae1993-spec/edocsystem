@@ -21,24 +21,7 @@ interface GroupRow {
   group_id: string
 }
 
-// ใช้ REST API ตรงเพื่อหลีกเลี่ยง Supabase generic type inference
-async function clearUrgent(docId: string) {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
-  if (!url || !key) return
-  await fetch(`${url}/rest/v1/documents?id=eq.${encodeURIComponent(docId)}`, {
-    method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json',
-      apikey: key,
-      Authorization: `Bearer ${key}`,
-      Prefer: 'return=minimal',
-    },
-    body: JSON.stringify({ urgent: '' }),
-  })
-}
-
-// Vercel Cron: ทุก 6 ชม.
+// Vercel Cron: รันวันละ 1 ครั้ง (9:00 น.)
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get('authorization')
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -55,9 +38,9 @@ export async function GET(req: NextRequest) {
     .select('group_id')
     .eq('status', 'active')
 
-  const docs = (docsData ?? []) as unknown as DocRow[]
-  const teachers = (teachersData ?? []) as unknown as TeacherRow[]
-  const groups = (groupsData ?? []) as unknown as GroupRow[]
+  const docs = (docsData ?? []) as DocRow[]
+  const teachers = (teachersData ?? []) as TeacherRow[]
+  const groups = (groupsData ?? []) as GroupRow[]
   const groupIds = groups.map(g => g.group_id)
 
   // 1. เอกสารค้างเกิน 24 ชม.
@@ -107,8 +90,8 @@ export async function GET(req: NextRequest) {
         )
       }
     } else {
-      // ทุกคนดำเนินการแล้ว → ลบสถานะด่วนผ่าน REST API โดยตรง
-      await clearUrgent(doc.id)
+      // ทุกคนดำเนินการแล้ว → ลบสถานะด่วน
+      await db.from('documents').update({ urgent: '' }).eq('id', doc.id)
     }
   }
 
