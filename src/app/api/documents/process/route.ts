@@ -2,15 +2,17 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase'
 import { broadcastToGroups, pushMessage } from '@/lib/line'
 
-// ส่งขอให้ GAS อัปโหลดไฟล์ขึ้น Google Drive แทน
+type TeacherRow = { id: string; name: string; line_user_id: string }
+type GroupRow = { group_id: string }
+type SettingRow = { value: string }
+
 async function uploadViaDriveGAS(
   base64Data: string,
   fileName: string,
-  mimeType: string = 'application/pdf'
+  mimeType = 'application/pdf'
 ): Promise<string> {
   const gasUrl = process.env.GAS_DRIVE_UPLOAD_URL
   if (!gasUrl) throw new Error('GAS_DRIVE_UPLOAD_URL not configured')
-
   const res = await fetch(gasUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -32,18 +34,16 @@ export async function POST(req: NextRequest) {
     const payload = await req.json()
     const db = createServiceClient()
 
-    let fileUrl = payload.existingFileUrl || ''
-    let attachmentUrl = payload.existingAttachmentUrl || ''
+    let fileUrl: string = payload.existingFileUrl || ''
+    let attachmentUrl: string = payload.existingAttachmentUrl || ''
 
-    // อัปโหลดไฟล์หลักผ่าน GAS → Google Drive
     if (payload.fileData) {
       fileUrl = await uploadViaDriveGAS(
         payload.fileData,
-        payload.fileName || `EDOC_${payload.docNo.replace('/', '_')}.pdf`
+        payload.fileName || `EDOC_${String(payload.docNo).replace('/', '_')}.pdf`
       )
     }
 
-    // อัปโหลดไฟล์แนบ
     if (payload.attachmentData) {
       attachmentUrl = await uploadViaDriveGAS(
         payload.attachmentData,
@@ -52,19 +52,16 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // กำหนดสถานะ
     const statusMap: Record<string, string> = {
       clerk: 'รอ ผอ. พิจารณา',
       director: 'อนุมัติแล้ว (รอแจกจ่าย)',
       distribute: 'แจกจ่ายแล้ว',
     }
-    const status = statusMap[payload.action] || 'รอ ผอ. พิจารณา'
-    const targetString = (payload.targetTeachers?.length > 0)
-      ? payload.targetTeachers.join(',')
-      : ''
+    const status = statusMap[payload.action as string] || 'รอ ผอ. พิจารณา'
+    const targetString =
+      payload.targetTeachers?.length > 0 ? (payload.targetTeachers as string[]).join(',') : ''
 
     if (payload.action === 'clerk' && !payload.docId) {
-      // สร้างเอกสารใหม่
       const newId = `DOC_${Date.now()}`
       const { error } = await db.from('documents').insert({
         id: newId,
@@ -81,7 +78,6 @@ export async function POST(req: NextRequest) {
       })
       if (error) throw new Error(error.message)
     } else {
-      // อัปเดตเอกสารเดิม
       const updateData: Record<string, unknown> = {
         status,
         updated_at: new Date().toISOString(),
@@ -91,21 +87,21 @@ export async function POST(req: NextRequest) {
       if (fileUrl) updateData.file_url = fileUrl
       if (attachmentUrl) updateData.attachment_url = attachmentUrl
       if (targetString) updateData.target = targetString
-      if (payload.trackingData) updateData.tracking_data = JSON.parse(payload.trackingData)
+      if (payload.trackingData) updateData.tracking_data = JSON.parse(payload.trackingData as string)
       if (payload.urgent !== undefined) updateData.urgent = payload.urgent
 
       const { error } = await db.from('documents').update(updateData).eq('id', payload.docId)
       if (error) throw new Error(error.message)
     }
 
-    // ดึง Group IDs ทั้งหมด
-    const { data: groups } = await db
+    // Group IDs
+    const { data: groupsRaw } = await db
       .from('line_groups')
       .select('group_id')
       .eq('status', 'active')
-    const groupIds = ((groups ?? []) as unknown as Array<{ group_id: string }>).map(g => g.group_id)
+    const groupIds = ((groupsRaw ?? []) as unknown as GroupRow[]).map(g => g.group_id)
 
-    // ยิง LINE notification
+    // LINE notifications
     if (payload.action === 'distribute') {
       const urgentPrefix = payload.urgent ? '🔴 ด่วนมาก! ' : '🔔 '
       let msg = `${urgentPrefix}มีเอกสารแจกจ่าย\nเลขรับ: ${payload.docNo}\nเรื่อง: ${payload.title}\nหมายเหตุ: ${payload.note || '-'}`
@@ -113,13 +109,13 @@ export async function POST(req: NextRequest) {
       if (attachmentUrl) msg += `\nไฟล์แนบ: ${attachmentUrl}`
       await broadcastToGroups(groupIds, msg)
 
-      // ส่งส่วนตัวถึงครูแต่ละคน
-      const isAll = payload.targetTeachers?.includes('all')
+      // แจ้งส่วนตัวครูแต่ละคน
+      const isAll = (payload.targetTeachers as string[] | undefined)?.includes('all')
       const { data: teachersRaw } = await db.from('teachers').select('id, name, line_user_id')
-      const teachers2 = ((teachersRaw ?? []) as unknown as Array<{id:string;name:string;line_user_id:string}>)
-      for (const t of teachers2 {
+      const teachers = ((teachersRaw ?? []) as unknown as TeacherRow[])
+      for (const t of teachers) {
         if (!t.line_user_id) continue
-        if (!isAll && !payload.targetTeachers?.includes(t.id)) continue
+        if (!isAll && !(payload.targetTeachers as string[] | undefined)?.includes(t.id)) continue
         await pushMessage(
           t.line_user_id,
           `📬 คุณได้รับเอกสารใหม่\nเลขรับ: ${payload.docNo}\nเรื่อง: ${payload.title}\n${payload.urgent ? '⚠️ เอกสารด่วนมาก!\n' : ''}กรุณาเข้าระบบเพื่อดำเนินการ`
@@ -130,15 +126,29 @@ export async function POST(req: NextRequest) {
         groupIds,
         `⚠️ มีเอกสารรอ ผอ. พิจารณา\nเลขรับ: ${payload.docNo}\nเรื่อง: ${payload.title}\nหมายเหตุ: ${payload.note || '-'}`
       )
-      // แจ้ง ผอ. ส่วนตัว
-      const { data: dirSetting } = await db.from('settings').select('value').eq('key', 'DIRECTOR_LINE_USER_ID').single()
+      const { data: dirRaw } = await db
+        .from('settings')
+        .select('value')
+        .eq('key', 'DIRECTOR_LINE_USER_ID')
+        .single()
+      const dirSetting = dirRaw as unknown as SettingRow | null
       if (dirSetting?.value) {
-        await pushMessage(dirSetting.value, `📋 (ถึง ผอ.) มีเอกสารรอพิจารณา\nเลขรับ: ${payload.docNo}\nเรื่อง: ${payload.title}`)
+        await pushMessage(
+          dirSetting.value,
+          `📋 (ถึง ผอ.) มีเอกสารรอพิจารณา\nเลขรับ: ${payload.docNo}\nเรื่อง: ${payload.title}`
+        )
       }
     } else if (payload.action === 'director') {
-      await broadcastToGroups(groupIds, `✅ ผอ. อนุมัติเอกสารแล้ว\nเลขรับ: ${payload.docNo}\nเรื่อง: ${payload.title}`)
-      // แจ้งธุรการ
-      const { data: clerkSetting } = await db.from('settings').select('value').eq('key', 'CLERK_LINE_USER_ID').single()
+      await broadcastToGroups(
+        groupIds,
+        `✅ ผอ. อนุมัติเอกสารแล้ว\nเลขรับ: ${payload.docNo}\nเรื่อง: ${payload.title}`
+      )
+      const { data: clerkRaw } = await db
+        .from('settings')
+        .select('value')
+        .eq('key', 'CLERK_LINE_USER_ID')
+        .single()
+      const clerkSetting = clerkRaw as unknown as SettingRow | null
       if (clerkSetting?.value) {
         await pushMessage(
           clerkSetting.value,
