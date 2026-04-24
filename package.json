@@ -9,9 +9,9 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "next": "14.2.5",
-    "react": "^18",
-    "react-dom": "^18",
+    "next": "15.3.1",
+    "react": "^19",
+    "react-dom": "^19",
     "@supabase/supabase-js": "^2.44.2",
     "fabric": "^5.3.1",
     "jspdf": "^2.5.1",
@@ -20,13 +20,13 @@
   },
   "devDependencies": {
     "@types/node": "^20",
-    "@types/react": "^18",
-    "@types/react-dom": "^18",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
     "typescript": "^5",
     "tailwindcss": "^3.4.1",
     "postcss": "^8",
     "autoprefixer": "^10",
-    "eslint": "^8",
-    "eslint-config-next": "14.2.5"
+    "eslint": "^9",
+    "eslint-config-next": "15.3.1"
   }
 }
