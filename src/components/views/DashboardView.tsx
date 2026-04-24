@@ -54,7 +54,7 @@ export default function DashboardView() {
   const [sendAction, setSendAction] = useState('')
   const [trackingDoc, setTrackingDoc] = useState<Document | null>(null)
   const [teacherEditOpen, setTeacherEditOpen] = useState(false)
-  const [teacherEditData, setTeacherEditData] = useState<{ mode: 'add' | 'edit'; data?: object } | null>(null)
+  const [teacherEditData, setTeacherEditData] = useState<{ mode: 'add' | 'edit'; data?: Record<string, unknown> } | null>(null)
   const [adminEditDoc, setAdminEditDoc] = useState<Document | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -407,7 +407,7 @@ export default function DashboardView() {
       {teacherEditOpen && teacherEditData && (
         <TeacherEditModal
           mode={teacherEditData.mode}
-          initialData={teacherEditData.data as object | undefined}
+          initialData={teacherEditData.data}
           onClose={() => setTeacherEditOpen(false)}
           onSuccess={() => { setTeacherEditOpen(false); loadTeachers() }}
         />
@@ -597,7 +597,7 @@ function SummaryTable({ data }: { data: TeacherSummary[] }) {
 function TeacherManageTable({ teachers, onAdd, onEdit, onDelete }: {
   teachers: ReturnType<typeof useApp>['state']['allTeachers']
   onAdd: () => void
-  onEdit: (t: object) => void
+  onEdit: (t: Record<string, unknown>) => void
   onDelete: (id: string, name: string) => void
 }) {
   return (
@@ -634,7 +634,7 @@ function TeacherManageTable({ teachers, onAdd, onEdit, onDelete }: {
                 </td>
                 <td className="p-3">
                   <div className="flex justify-end gap-1.5">
-                    <button onClick={() => onEdit(t)} className="px-2.5 py-1.5 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 text-xs font-semibold text-indigo-600 transition">✏️ แก้ไข</button>
+                    <button onClick={() => onEdit(t as unknown as Record<string, unknown>)} className="px-2.5 py-1.5 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 text-xs font-semibold text-indigo-600 transition">✏️ แก้ไข</button>
                     <button onClick={() => onDelete(t.id, t.name)} className="px-2.5 py-1.5 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 text-xs font-semibold text-red-600 transition">🗑️ ลบ</button>
                   </div>
                 </td>
