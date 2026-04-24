@@ -21,6 +21,23 @@ interface GroupRow {
   group_id: string
 }
 
+// ใช้ REST API ตรงเพื่อหลีกเลี่ยง Supabase generic type inference
+async function clearUrgent(docId: string) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!url || !key) return
+  await fetch(`${url}/rest/v1/documents?id=eq.${encodeURIComponent(docId)}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: key,
+      Authorization: `Bearer ${key}`,
+      Prefer: 'return=minimal',
+    },
+    body: JSON.stringify({ urgent: '' }),
+  })
+}
+
 // Vercel Cron: ทุก 6 ชม.
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get('authorization')
@@ -56,7 +73,9 @@ export async function GET(req: NextRequest) {
 
   if (overdueList.length > 0) {
     let msg = `🚨 เอกสารค้างเกิน 24 ชม. จำนวน ${overdueList.length} รายการ\n━━━━━━━━━━━━━━━━━━━━\n`
-    overdueList.forEach((d, i) => { msg += `${i + 1}. [${d.docNo}] ${d.title} — ค้าง ${d.hours} ชม.\n` })
+    overdueList.forEach((d, i) => {
+      msg += `${i + 1}. [${d.docNo}] ${d.title} — ค้าง ${d.hours} ชม.\n`
+    })
     msg += '━━━━━━━━━━━━━━━━━━━━\nกรุณาดำเนินการโดยเร็ว'
     await broadcastToGroups(groupIds, msg)
   }
@@ -75,17 +94,27 @@ export async function GET(req: NextRequest) {
     }
 
     if (unopened.length > 0) {
-      const urgentMsg = `🔴 เอกสารด่วนมาก!\nเลขรับ: ${doc.doc_no}\nเรื่อง: ${doc.title}\n❌ ยังไม่ดำเนินการ: ${unopened.join(', ')}\n⚠️ ด่วน!`
+      const urgentMsg =
+        `🔴 เอกสารด่วนมาก!\nเลขรับ: ${doc.doc_no}\nเรื่อง: ${doc.title}\n` +
+        `❌ ยังไม่ดำเนินการ: ${unopened.join(', ')}\n⚠️ กรุณาดำเนินการโดยด่วน!`
       await broadcastToGroups(groupIds, urgentMsg)
       for (const t of teachers) {
         if (!isAll && !targets.includes(t.id)) continue
         if (tracking[t.id] || !t.line_user_id) continue
-        await pushMessage(t.line_user_id, `🔴 เอกสารด่วนมาก!\nเลขรับ: ${doc.doc_no}\nเรื่อง: ${doc.title}\n⚠️ กรุณาเข้าระบบดำเนินการ!`)
+        await pushMessage(
+          t.line_user_id,
+          `🔴 เอกสารด่วนมาก!\nเลขรับ: ${doc.doc_no}\nเรื่อง: ${doc.title}\n⚠️ กรุณาเข้าระบบดำเนินการ!`
+        )
       }
     } else {
-      await db.from('documents').update({ urgent: '' }).eq('id', doc.id)
+      // ทุกคนดำเนินการแล้ว → ลบสถานะด่วนผ่าน REST API โดยตรง
+      await clearUrgent(doc.id)
     }
   }
 
-  return NextResponse.json({ ok: true, checked: docs.length, overdueCount: overdueList.length })
+  return NextResponse.json({
+    ok: true,
+    checked: docs.length,
+    overdueCount: overdueList.length,
+  })
 }
