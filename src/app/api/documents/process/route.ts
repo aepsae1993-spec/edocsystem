@@ -103,7 +103,7 @@ export async function POST(req: NextRequest) {
       .from('line_groups')
       .select('group_id')
       .eq('status', 'active')
-    const groupIds = (groups || []).map((g) => g.group_id)
+    const groupIds = ((groups ?? []) as unknown as Array<{ group_id: string }>).map(g => g.group_id)
 
     // ยิง LINE notification
     if (payload.action === 'distribute') {
@@ -115,8 +115,9 @@ export async function POST(req: NextRequest) {
 
       // ส่งส่วนตัวถึงครูแต่ละคน
       const isAll = payload.targetTeachers?.includes('all')
-      const { data: teachers } = await db.from('teachers').select('id, name, line_user_id')
-      for (const t of teachers || []) {
+      const { data: teachersRaw } = await db.from('teachers').select('id, name, line_user_id')
+      const teachers2 = ((teachersRaw ?? []) as unknown as Array<{id:string;name:string;line_user_id:string}>)
+      for (const t of teachers2 {
         if (!t.line_user_id) continue
         if (!isAll && !payload.targetTeachers?.includes(t.id)) continue
         await pushMessage(
