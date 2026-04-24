@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase'
 
-type Params = { params: { id: string } }
-
-// PATCH: แก้ไขฟิลด์ต่างๆ ของเอกสาร
-export async function PATCH(req: NextRequest, { params }: Params) {
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   try {
+    const { id } = await params
     const body = await req.json()
     const db = createServiceClient()
 
-    // ถ้าส่ง attachmentData มา ให้ upload ผ่าน GAS ก่อน
     if (body.attachmentData) {
       const gasUrl = process.env.GAS_DRIVE_UPLOAD_URL
       if (gasUrl) {
@@ -33,7 +33,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     }
 
     body.updated_at = new Date().toISOString()
-    const { error } = await db.from('documents').update(body).eq('id', params.id)
+    const { error } = await db.from('documents').update(body).eq('id', id)
     if (error) throw new Error(error.message)
 
     return NextResponse.json({ success: true })
@@ -42,11 +42,14 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   }
 }
 
-// DELETE: ลบเอกสาร
-export async function DELETE(_: NextRequest, { params }: Params) {
+export async function DELETE(
+  _: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   try {
+    const { id } = await params
     const db = createServiceClient()
-    const { error } = await db.from('documents').delete().eq('id', params.id)
+    const { error } = await db.from('documents').delete().eq('id', id)
     if (error) throw new Error(error.message)
     return NextResponse.json({ success: true, message: 'ลบเอกสารเรียบร้อยแล้ว' })
   } catch (e: unknown) {
