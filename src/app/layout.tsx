@@ -1,10 +1,15 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
   title: 'E-Document System',
   description: 'ระบบสารบรรณอิเล็กทรอนิกส์',
-  viewport: 'width=device-width, initial-scale=1.0, maximum-scale=1.0',
+}
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1.0,
+  maximumScale: 1.0,
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
