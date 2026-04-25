@@ -361,7 +361,14 @@ export default function EditorView() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
-      const result = await res.json()
+      const text = await res.text()
+      let result: { success: boolean; message?: string }
+      try {
+        result = JSON.parse(text)
+      } catch {
+        if (res.status === 413) throw new Error('ไฟล์ใหญ่เกินไป กรุณาลดขนาดไฟล์ก่อนส่ง')
+        throw new Error(`เซิร์ฟเวอร์ตอบกลับผิดพลาด (${res.status})`)
+      }
       showLoading(false)
 
       if (result.success) {
