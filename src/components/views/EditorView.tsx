@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useApp } from '@/lib/store'
+import { uploadToGAS } from '@/lib/gasUpload'
 import SendModal from '../modals/SendModal'
 
 declare global {
@@ -315,14 +316,14 @@ export default function EditorView() {
       const { canvas } = canvasesRef.current[i]
       canvas.discardActiveObject()
       canvas.renderAll()
-      const exportMultiplier = 1.5
-      const imgData = canvas.toDataURL({ format: 'jpeg', quality: 0.85, multiplier: exportMultiplier })
+      const exportMultiplier = 2.0
+      const imgData = canvas.toDataURL({ format: 'png', multiplier: exportMultiplier })
       const exportW = canvas.width * exportMultiplier
       const exportH = canvas.height * exportMultiplier
       const orientation = canvas.width > canvas.height ? 'l' : 'p'
       if (i === 0) pdf = new jsPDF(orientation, 'pt', [exportW, exportH])
       else pdf!.addPage([exportW, exportH], orientation)
-      pdf!.addImage(imgData, 'JPEG', 0, 0, exportW, exportH, undefined, 'FAST')
+      pdf!.addImage(imgData, 'PNG', 0, 0, exportW, exportH, undefined, 'FAST')
     }
     return pdf ? pdf.output('datauristring').split(',')[1] : null
   }
@@ -335,23 +336,42 @@ export default function EditorView() {
     showLoading(true, 'กำลังเตรียมไฟล์...')
 
     try {
-      let fileData: string | null = null
+      const docNo = customDocNo || (currentDoc ? currentDoc.doc_no : newGeneratedDocNo)
+
+      // 1. Upload canvas PDF directly to GAS (bypass Vercel limit)
+      let fileUrl = currentDoc?.file_url || ''
       const isNewDoc = sendAction === 'clerk' && !currentDoc
       if (isNewDoc || canvasEditedRef.current) {
-        fileData = await exportCanvasToPdfBase64()
+        showLoading(true, 'กำลังอัพโหลด PDF...')
+        const fileData = await exportCanvasToPdfBase64()
+        if (fileData) {
+          fileUrl = await uploadToGAS(fileData, `EDOC_${docNo.replace('/', '_')}.pdf`, 'application/pdf')
+        }
       }
 
-      const docNo = customDocNo || (currentDoc ? currentDoc.doc_no : newGeneratedDocNo)
+      // 2. Upload attachment files directly to GAS
+      const attachmentUrls: string[] = currentDoc?.attachment_url
+        ? currentDoc.attachment_url.split('\n').filter(Boolean)
+        : []
+      const attachmentDataList = (payload.attachmentDataList as Array<{ data: string; name: string; mime: string }>) || []
+      for (let i = 0; i < attachmentDataList.length; i++) {
+        const item = attachmentDataList[i]
+        showLoading(true, `กำลังอัพโหลดไฟล์แนบ ${i + 1}/${attachmentDataList.length}...`)
+        const url = await uploadToGAS(item.data, item.name, item.mime || 'application/octet-stream')
+        attachmentUrls.push(url)
+      }
+
+      // 3. Send only URLs to process API (no base64 in body)
+      const { attachmentDataList: _a, ...restPayload } = payload
+      void _a
       const body = {
-        ...payload,
+        ...restPayload,
         action: sendAction,
         docId: currentDoc?.id || null,
         docNo,
         sender: currentUser?.name,
-        fileData,
-        fileName: `EDOC_${docNo.replace('/', '_')}.pdf`,
-        existingFileUrl: currentDoc?.file_url || '',
-        existingAttachmentUrl: currentDoc?.attachment_url || '',
+        fileUrl,
+        attachmentUrls,
         trackingData: currentDoc ? JSON.stringify(currentDoc.tracking_data) : null,
       }
 
@@ -366,7 +386,6 @@ export default function EditorView() {
       try {
         result = JSON.parse(text)
       } catch {
-        if (res.status === 413) throw new Error('ไฟล์ใหญ่เกินไป กรุณาลดขนาดไฟล์ก่อนส่ง')
         throw new Error(`เซิร์ฟเวอร์ตอบกลับผิดพลาด (${res.status})`)
       }
       showLoading(false)
