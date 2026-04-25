@@ -1,7 +1,6 @@
 'use client'
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useApp } from '@/lib/store'
-import { uploadToGAS } from '@/lib/gasUpload'
 import { getPendingFile, clearPendingFile } from '@/lib/pendingFile'
 import SendModal from '../modals/SendModal'
 
@@ -372,12 +371,12 @@ export default function EditorView() {
           annotImg.onload = () => { ctx.drawImage(annotImg, 0, 0, exportW, exportH); resolve() }
           annotImg.src = annotData
         })
-        imgData = hiResC.toDataURL('image/png')
+        imgData = hiResC.toDataURL('image/jpeg', 0.88)
       } else {
         // Image file: use fabric canvas at 2x directly
         canvas.renderAll()
         const exportMultiplier = 2.0
-        imgData = canvas.toDataURL({ format: 'png', multiplier: exportMultiplier })
+        imgData = canvas.toDataURL({ format: 'jpeg', quality: 0.88, multiplier: exportMultiplier })
         exportW = canvas.width * exportMultiplier
         exportH = canvas.height * exportMultiplier
       }
@@ -385,7 +384,7 @@ export default function EditorView() {
       const orientation = exportW > exportH ? 'l' : 'p'
       if (i === 0) pdf = new jsPDF(orientation, 'pt', [exportW, exportH])
       else pdf.addPage([exportW, exportH], orientation)
-      pdf.addImage(imgData, 'PNG', 0, 0, exportW, exportH, undefined, 'FAST')
+      pdf.addImage(imgData, 'JPEG', 0, 0, exportW, exportH, undefined, 'FAST')
     }
     return pdf ? pdf.output('datauristring').split(',')[1] : null
   }
@@ -400,40 +399,22 @@ export default function EditorView() {
     try {
       const docNo = customDocNo || (currentDoc ? currentDoc.doc_no : newGeneratedDocNo)
 
-      // 1. Upload canvas PDF directly to GAS (bypass Vercel limit)
-      let fileUrl = currentDoc?.file_url || ''
+      let fileData: string | null = null
       const isNewDoc = sendAction === 'clerk' && !currentDoc
       if (isNewDoc || canvasEditedRef.current) {
-        showLoading(true, 'กำลังอัพโหลด PDF...')
-        const fileData = await exportCanvasToPdfBase64()
-        if (fileData) {
-          fileUrl = await uploadToGAS(fileData, `EDOC_${docNo.replace('/', '_')}.pdf`, 'application/pdf')
-        }
+        fileData = await exportCanvasToPdfBase64()
       }
 
-      // 2. Upload attachment files directly to GAS
-      const attachmentUrls: string[] = currentDoc?.attachment_url
-        ? currentDoc.attachment_url.split('\n').filter(Boolean)
-        : []
-      const attachmentDataList = (payload.attachmentDataList as Array<{ data: string; name: string; mime: string }>) || []
-      for (let i = 0; i < attachmentDataList.length; i++) {
-        const item = attachmentDataList[i]
-        showLoading(true, `กำลังอัพโหลดไฟล์แนบ ${i + 1}/${attachmentDataList.length}...`)
-        const url = await uploadToGAS(item.data, item.name, item.mime || 'application/octet-stream')
-        attachmentUrls.push(url)
-      }
-
-      // 3. Send only URLs to process API (no base64 in body)
-      const { attachmentDataList: _a, ...restPayload } = payload
-      void _a
       const body = {
-        ...restPayload,
+        ...payload,
         action: sendAction,
         docId: currentDoc?.id || null,
         docNo,
         sender: currentUser?.name,
-        fileUrl,
-        attachmentUrls,
+        fileData,
+        fileName: `EDOC_${docNo.replace('/', '_')}.pdf`,
+        existingFileUrl: currentDoc?.file_url || '',
+        existingAttachmentUrl: currentDoc?.attachment_url || '',
         trackingData: currentDoc ? JSON.stringify(currentDoc.tracking_data) : null,
       }
 
