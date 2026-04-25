@@ -248,15 +248,32 @@ export default function DashboardView() {
   async function handleDistributeSuccess(doc: Document, payload: Record<string, unknown>) {
     showLoading(true, 'กำลังแจกจ่ายเอกสาร...')
     try {
+      // Upload each attachment separately, then send only URLs
+      const attachmentUrls: string[] = doc.attachment_url
+        ? doc.attachment_url.split('\n').filter(Boolean) : []
+      const attachmentDataList = (payload.attachmentDataList as Array<{ data: string; name: string; mime: string }>) || []
+      for (let i = 0; i < attachmentDataList.length; i++) {
+        const item = attachmentDataList[i]
+        showLoading(true, `กำลังอัพโหลดไฟล์แนบ ${i + 1}/${attachmentDataList.length}...`)
+        const up = await fetch('/api/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileData: item.data, fileName: item.name, mimeType: item.mime || 'application/octet-stream' }),
+        })
+        const upResult = await up.json()
+        if (!upResult.success) throw new Error(upResult.message)
+        attachmentUrls.push(upResult.fileUrl)
+      }
+      const { attachmentDataList: _a, ...restPayload } = payload
+      void _a
       const body = {
-        ...payload,
+        ...restPayload,
         action: 'distribute',
         docId: doc.id,
         docNo: doc.doc_no,
         sender: currentUser?.name,
-        fileData: null,
-        existingFileUrl: doc.file_url || '',
-        existingAttachmentUrl: doc.attachment_url || '',
+        fileUrl: doc.file_url || '',
+        attachmentUrls,
         trackingData: JSON.stringify(doc.tracking_data || {}),
       }
 
