@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useApp } from '@/lib/store'
 import { getPendingFile, clearPendingFile } from '@/lib/pendingFile'
+import { compressPdfIfNeeded } from '@/lib/compressPdf'
 import SendModal from '../modals/SendModal'
 
 declare global {
@@ -43,6 +44,7 @@ export default function EditorView() {
   const [savedStamps, setSavedStamps] = useState<{ name: string; data: string }[]>([])
   const [libsLoaded, setLibsLoaded] = useState(false)
   const [pageLoadProgress, setPageLoadProgress] = useState('')
+  const [totalPdfPages, setTotalPdfPages] = useState(0)
 
   // =============================================
   // LOAD EXTERNAL LIBS (fabric, pdfjs, jspdf)
@@ -120,59 +122,45 @@ export default function EditorView() {
       const pdfDoc = await pdfjsLib.getDocument(buffer).promise
       pdfDocRef.current = pdfDoc
       pageScalesRef.current = []
+      setTotalPdfPages(pdfDoc.numPages)
 
-      for (let num = 1; num <= pdfDoc.numPages; num++) {
-        if (num === 1) {
-          showLoading(true, 'กำลังโหลดหน้าแรก...')
-        } else {
-          setPageLoadProgress(`กำลังโหลดหน้า ${num}/${pdfDoc.numPages}...`)
-        }
+      // Only render page 1 for annotation — pages 2+ are preserved during export
+      showLoading(true, 'กำลังโหลดเอกสาร...')
+      const page = await pdfDoc.getPage(1)
+      const unscaledVp = page.getViewport({ scale: 1.0 })
+      const displayWidth = Math.min(800, window.innerWidth - 40)
+      const displayScale = displayWidth / unscaledVp.width
+      pageScalesRef.current.push(displayScale)
 
-        const page = await pdfDoc.getPage(num)
-        const unscaledVp = page.getViewport({ scale: 1.0 })
-        const displayWidth = Math.min(800, window.innerWidth - 40)
-        const displayScale = displayWidth / unscaledVp.width
-        pageScalesRef.current.push(displayScale)
+      const displayVp = page.getViewport({ scale: displayScale })
 
-        // Render at 1x for display (fast)
-        const displayVp = page.getViewport({ scale: displayScale })
+      const wrapper = document.createElement('div')
+      wrapper.className = 'bg-white shadow-lg relative border border-slate-200 mx-auto rounded-lg overflow-hidden'
+      const canvasEl = document.createElement('canvas')
+      canvasEl.id = 'canvas_p1'
+      wrapper.appendChild(canvasEl)
+      containerRef.current!.appendChild(wrapper)
 
-        const wrapper = document.createElement('div')
-        wrapper.className = 'bg-white shadow-lg relative border border-slate-200 mx-auto rounded-lg overflow-hidden'
-        const canvasEl = document.createElement('canvas')
-        canvasEl.id = `canvas_p${num}`
-        wrapper.appendChild(canvasEl)
-        containerRef.current!.appendChild(wrapper)
+      const fCanvas = new fabric.Canvas(canvasEl.id)
+      canvasesRef.current.push({ canvas: fCanvas, hiResScale: 1.0 })
+      fCanvas.setWidth(displayVp.width)
+      fCanvas.setHeight(displayVp.height)
 
-        const fCanvas = new fabric.Canvas(canvasEl.id)
-        canvasesRef.current.push({ canvas: fCanvas, hiResScale: 1.0 })
-        fCanvas.setWidth(displayVp.width)
-        fCanvas.setHeight(displayVp.height)
+      const tempC = document.createElement('canvas')
+      tempC.width = displayVp.width
+      tempC.height = displayVp.height
+      await page.render({ canvasContext: tempC.getContext('2d'), viewport: displayVp }).promise
 
-        const tempC = document.createElement('canvas')
-        tempC.width = displayVp.width
-        tempC.height = displayVp.height
-        await page.render({ canvasContext: tempC.getContext('2d'), viewport: displayVp }).promise
-
-        await new Promise<void>(r => {
-          fabric.Image.fromURL(tempC.toDataURL('image/png'), (img: object) => {
-            fCanvas.setBackgroundImage(img, fCanvas.renderAll.bind(fCanvas), {
-              scaleX: 1,
-              scaleY: 1,
-            })
-            if (autoNumber && num === 1) addAutoRunningText(fCanvas, autoNumber)
-            r()
-          })
+      await new Promise<void>(r => {
+        fabric.Image.fromURL(tempC.toDataURL('image/png'), (img: object) => {
+          fCanvas.setBackgroundImage(img, fCanvas.renderAll.bind(fCanvas), { scaleX: 1, scaleY: 1 })
+          if (autoNumber) addAutoRunningText(fCanvas, autoNumber)
+          r()
         })
+      })
 
-        fCanvas.on('path:created', () => { canvasEditedRef.current = true })
-
-        // Show page 1 immediately, load rest in background
-        if (num === 1) {
-          showLoading(false)
-          await new Promise(r => setTimeout(r, 0))
-        }
-      }
+      fCanvas.on('path:created', () => { canvasEditedRef.current = true })
+      showLoading(false)
       setPageLoadProgress('')
     } else {
       // Image
@@ -331,58 +319,73 @@ export default function EditorView() {
     const { jspdf } = window
     const { jsPDF } = jspdf
 
-    // Phase 1: render all pages to hi-res HTMLCanvasElements once
-    type HiResPage = { el: HTMLCanvasElement; w: number; h: number }
-    const hiResPages: HiResPage[] = []
+    // Phase 1a: render page 1 (with annotations) to hi-res HTMLCanvasElement
+    showLoading(true, 'กำลังเตรียมหน้า 1...')
+    await new Promise(r => setTimeout(r, 30))
 
-    for (let i = 0; i < canvasesRef.current.length; i++) {
-      showLoading(true, `กำลังเตรียมหน้า ${i + 1}/${canvasesRef.current.length}...`)
-      await new Promise(r => setTimeout(r, 30))
-      const { canvas } = canvasesRef.current[i]
-      canvas.discardActiveObject()
+    const { canvas } = canvasesRef.current[0]
+    canvas.discardActiveObject()
 
-      let hiResC: HTMLCanvasElement
-      let w: number, h: number
+    let p1El: HTMLCanvasElement
+    let p1W: number, p1H: number
 
-      if (pdfDocRef.current && pageScalesRef.current[i] !== undefined) {
-        const page = await pdfDocRef.current.getPage(i + 1)
-        const hiResScale = pageScalesRef.current[i] * 2.0
-        const hiResVp = page.getViewport({ scale: hiResScale })
-        w = hiResVp.width; h = hiResVp.height
-        hiResC = document.createElement('canvas')
-        hiResC.width = w; hiResC.height = h
-        await page.render({ canvasContext: hiResC.getContext('2d')!, viewport: hiResVp }).promise
+    if (pdfDocRef.current && pageScalesRef.current[0] !== undefined) {
+      const page = await pdfDocRef.current.getPage(1)
+      const hiResScale = pageScalesRef.current[0] * 2.0
+      const hiResVp = page.getViewport({ scale: hiResScale })
+      p1W = hiResVp.width; p1H = hiResVp.height
+      p1El = document.createElement('canvas')
+      p1El.width = p1W; p1El.height = p1H
+      await page.render({ canvasContext: p1El.getContext('2d')!, viewport: hiResVp }).promise
 
-        // Composite annotations (without background) on top of hi-res PDF
-        const origBg = canvas.backgroundImage
-        canvas.backgroundImage = null
-        canvas.renderAll()
-        const annotData = canvas.toDataURL({ format: 'png', multiplier: 2.0 })
-        canvas.backgroundImage = origBg
-        canvas.renderAll()
-        await new Promise<void>(resolve => {
-          const img = new Image()
-          img.onload = () => { hiResC.getContext('2d')!.drawImage(img, 0, 0, w, h); resolve() }
-          img.src = annotData
-        })
-      } else {
-        // Image file: draw fabric canvas at 2x to temp HTMLCanvasElement
-        w = canvas.width * 2; h = canvas.height * 2
-        hiResC = document.createElement('canvas')
-        hiResC.width = w; hiResC.height = h
-        canvas.renderAll()
-        await new Promise<void>(resolve => {
-          const img = new Image()
-          img.onload = () => { hiResC.getContext('2d')!.drawImage(img, 0, 0, w, h); resolve() }
-          img.src = canvas.toDataURL({ format: 'png', multiplier: 2.0 })
-        })
-      }
-
-      hiResPages.push({ el: hiResC, w, h })
+      // Composite annotations on top of hi-res PDF
+      const origBg = canvas.backgroundImage
+      canvas.backgroundImage = null
+      canvas.renderAll()
+      const annotData = canvas.toDataURL({ format: 'png', multiplier: 2.0 })
+      canvas.backgroundImage = origBg
+      canvas.renderAll()
+      await new Promise<void>(resolve => {
+        const img = new Image()
+        img.onload = () => { p1El.getContext('2d')!.drawImage(img, 0, 0, p1W, p1H); resolve() }
+        img.src = annotData
+      })
+    } else {
+      // Image file
+      p1W = canvas.width * 2; p1H = canvas.height * 2
+      p1El = document.createElement('canvas')
+      p1El.width = p1W; p1El.height = p1H
+      canvas.renderAll()
+      await new Promise<void>(resolve => {
+        const img = new Image()
+        img.onload = () => { p1El.getContext('2d')!.drawImage(img, 0, 0, p1W, p1H); resolve() }
+        img.src = canvas.toDataURL({ format: 'png', multiplier: 2.0 })
+      })
     }
 
-    // Phase 2: try quality levels until size fits (JPEG encode is fast — no re-render needed)
-    const MAX_B64 = 3.5 * 1024 * 1024 // 3.5MB → safe under Vercel 4.5MB limit
+    // Phase 1b: pre-render pages 2+ from pdfDocRef at display scale, encode as JPEG strings
+    // (discards HTMLCanvasElement immediately — memory efficient for large docs)
+    type ExtraPage = { jpegData: string; w: number; h: number }
+    const extraPages: ExtraPage[] = []
+
+    if (pdfDocRef.current && pdfDocRef.current.numPages > 1) {
+      for (let num = 2; num <= pdfDocRef.current.numPages; num++) {
+        showLoading(true, `กำลังเตรียมหน้า ${num}/${pdfDocRef.current.numPages}...`)
+        await new Promise(r => setTimeout(r, 30))
+        const page = await pdfDocRef.current.getPage(num)
+        const unscaledVp = page.getViewport({ scale: 1.0 })
+        const displayWidth = Math.min(800, window.innerWidth - 40)
+        const scale = displayWidth / unscaledVp.width
+        const vp = page.getViewport({ scale })
+        const tempC = document.createElement('canvas')
+        tempC.width = vp.width; tempC.height = vp.height
+        await page.render({ canvasContext: tempC.getContext('2d')!, viewport: vp }).promise
+        extraPages.push({ jpegData: tempC.toDataURL('image/jpeg', 0.75), w: vp.width, h: vp.height })
+      }
+    }
+
+    // Phase 2: try quality levels for page 1; extra pages use fixed quality JPEG strings
+    const MAX_B64 = 3.5 * 1024 * 1024
     const qualitySteps = [0.88, 0.75, 0.60, 0.45]
 
     for (let qi = 0; qi < qualitySteps.length; qi++) {
@@ -392,14 +395,15 @@ export default function EditorView() {
         : `กำลังลดขนาดอัตโนมัติ (คุณภาพ ${Math.round(quality * 100)}%)...`)
       await new Promise(r => setTimeout(r, 30))
 
+      const p1Img = p1El.toDataURL('image/jpeg', quality)
+      const orientation = p1W > p1H ? 'l' : 'p'
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let pdf: any = null
-      for (const { el, w, h } of hiResPages) {
-        const imgData = el.toDataURL('image/jpeg', quality)
-        const orientation = w > h ? 'l' : 'p'
-        if (!pdf) pdf = new jsPDF(orientation, 'pt', [w, h])
-        else pdf.addPage([w, h], orientation)
-        pdf.addImage(imgData, 'JPEG', 0, 0, w, h, undefined, 'FAST')
+      const pdf: any = new jsPDF(orientation, 'pt', [p1W, p1H])
+      pdf.addImage(p1Img, 'JPEG', 0, 0, p1W, p1H, undefined, 'FAST')
+
+      for (const { jpegData, w, h } of extraPages) {
+        pdf.addPage([w, h], w > h ? 'l' : 'p')
+        pdf.addImage(jpegData, 'JPEG', 0, 0, w, h, undefined, 'FAST')
       }
 
       const b64: string = pdf.output('datauristring').split(',')[1]
@@ -446,10 +450,15 @@ export default function EditorView() {
       for (let i = 0; i < attachmentDataList.length; i++) {
         const item = attachmentDataList[i]
         showLoading(true, `กำลังอัพโหลดไฟล์แนบ ${i + 1}/${attachmentDataList.length}...`)
+        const { data: fileData, compressed } = await compressPdfIfNeeded(
+          item.data, item.mime || '',
+          (msg) => showLoading(true, msg)
+        )
+        if (compressed) showToast(`⚠️ ลดขนาด "${item.name}" อัตโนมัติ`)
         const up = await fetch('/api/upload', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileData: item.data, fileName: item.name, mimeType: item.mime || 'application/octet-stream' }),
+          body: JSON.stringify({ fileData, fileName: item.name, mimeType: item.mime || 'application/octet-stream' }),
         })
         const upResult = await up.json()
         if (!upResult.success) throw new Error(upResult.message)
@@ -565,6 +574,12 @@ export default function EditorView() {
       {pageLoadProgress && (
         <div className="bg-indigo-600 text-white text-xs text-center py-1 px-3 shrink-0 animate-pulse">
           ⏳ {pageLoadProgress}
+        </div>
+      )}
+      {/* Multi-page notice */}
+      {totalPdfPages > 1 && !pageLoadProgress && (
+        <div className="bg-amber-50 border-b border-amber-200 text-amber-700 text-xs text-center py-1 px-3 shrink-0">
+          📄 เอกสารทั้งหมด {totalPdfPages} หน้า — แสดงหน้า 1 สำหรับแก้ไข | หน้า 2–{totalPdfPages} จะถูกส่งพร้อมกันอัตโนมัติ
         </div>
       )}
       {/* Header */}
