@@ -315,14 +315,14 @@ export default function EditorView() {
       const { canvas } = canvasesRef.current[i]
       canvas.discardActiveObject()
       canvas.renderAll()
-      const exportMultiplier = 2.0
-      const imgData = canvas.toDataURL({ format: 'png', multiplier: exportMultiplier })
+      const exportMultiplier = 1.5
+      const imgData = canvas.toDataURL({ format: 'jpeg', quality: 0.85, multiplier: exportMultiplier })
       const exportW = canvas.width * exportMultiplier
       const exportH = canvas.height * exportMultiplier
       const orientation = canvas.width > canvas.height ? 'l' : 'p'
       if (i === 0) pdf = new jsPDF(orientation, 'pt', [exportW, exportH])
       else pdf!.addPage([exportW, exportH], orientation)
-      pdf!.addImage(imgData, 'PNG', 0, 0, exportW, exportH, undefined, 'FAST')
+      pdf!.addImage(imgData, 'JPEG', 0, 0, exportW, exportH, undefined, 'FAST')
     }
     return pdf ? pdf.output('datauristring').split(',')[1] : null
   }
