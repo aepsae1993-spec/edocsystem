@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Image from 'next/image'
 import { useApp } from '@/lib/store'
 import { setPendingFile } from '@/lib/pendingFile'
+import { compressPdfIfNeeded } from '@/lib/compressPdf'
 import type { Document, TeacherSummary } from '@/types/database'
 import SendModal from '../modals/SendModal'
 import TrackingModal from '../modals/TrackingModal'
@@ -255,10 +256,15 @@ export default function DashboardView() {
       for (let i = 0; i < attachmentDataList.length; i++) {
         const item = attachmentDataList[i]
         showLoading(true, `กำลังอัพโหลดไฟล์แนบ ${i + 1}/${attachmentDataList.length}...`)
+        const { data: fileData, compressed } = await compressPdfIfNeeded(
+          item.data, item.mime || '',
+          (msg) => showLoading(true, msg)
+        )
+        if (compressed) showToast(`⚠️ ลดขนาด "${item.name}" อัตโนมัติ`)
         const up = await fetch('/api/upload', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileData: item.data, fileName: item.name, mimeType: item.mime || 'application/octet-stream' }),
+          body: JSON.stringify({ fileData, fileName: item.name, mimeType: item.mime || 'application/octet-stream' }),
         })
         const upResult = await up.json()
         if (!upResult.success) throw new Error(upResult.message)
