@@ -5,6 +5,7 @@ import { broadcastToGroups, pushMessage } from '@/lib/line'
 type TeacherRow = { id: string; name: string; line_user_id: string }
 type GroupRow = { group_id: string }
 type SettingRow = { value: string }
+type DocRow = { target: string; doc_type: string }
 
 async function uploadViaDriveGAS(
   base64Data: string,
@@ -58,6 +59,8 @@ export async function POST(req: NextRequest) {
       distribute: 'แจกจ่ายแล้ว',
     }
     const status = statusMap[payload.action as string] || 'รอ ผอ. พิจารณา'
+
+    // target string — director sets this; distribute does NOT override
     const targetString =
       payload.targetTeachers?.length > 0 ? (payload.targetTeachers as string[]).join(',') : ''
 
@@ -86,9 +89,12 @@ export async function POST(req: NextRequest) {
       if (payload.note !== undefined) updateData.note = payload.note
       if (fileUrl) updateData.file_url = fileUrl
       if (attachmentUrl) updateData.attachment_url = attachmentUrl
-      if (targetString) updateData.target = targetString
+      // Only update target when director sets it (not during distribute)
+      if (targetString && payload.action !== 'distribute') updateData.target = targetString
       if (payload.trackingData) updateData.tracking_data = JSON.parse(payload.trackingData as string)
       if (payload.urgent !== undefined) updateData.urgent = payload.urgent
+      // Save doc_type when director approves
+      if (payload.docType) updateData.doc_type = payload.docType
 
       const { error } = await db.from('documents').update(updateData).eq('id', payload.docId)
       if (error) throw new Error(error.message)
@@ -103,22 +109,35 @@ export async function POST(req: NextRequest) {
 
     // LINE notifications
     if (payload.action === 'distribute') {
+      // Fetch target & doc_type set by director
+      const { data: existingDocRaw } = await db
+        .from('documents')
+        .select('target, doc_type')
+        .eq('id', payload.docId)
+        .single()
+      const existingDoc = existingDocRaw as unknown as DocRow | null
+      const docTarget = existingDoc?.target || 'all'
+      const docType = existingDoc?.doc_type || ''
+
+      const targetParts = docTarget.split(',').map((s: string) => s.trim())
+      const isAll = targetParts.includes('all') || targetParts.length === 0 || docTarget === ''
+
       const urgentPrefix = payload.urgent ? '🔴 ด่วนมาก! ' : '🔔 '
-      let msg = `${urgentPrefix}มีเอกสารแจกจ่าย\nเลขรับ: ${payload.docNo}\nเรื่อง: ${payload.title}\nหมายเหตุ: ${payload.note || '-'}`
+      const targetLabel = isAll ? 'ทุกคน' : targetParts.join(', ')
+      const docTypeLine = docType ? `\nประเภท: ${docType}` : ''
+      let msg = `${urgentPrefix}มีเอกสารแจกจ่าย${docTypeLine}\nเลขรับ: ${payload.docNo}\nเรื่อง: ${payload.title}\nแจ้งเตือน: ${targetLabel}\nหมายเหตุ: ${payload.note || '-'}`
       if (fileUrl) msg += `\nเอกสาร: ${fileUrl}`
       if (attachmentUrl) msg += `\nไฟล์แนบ: ${attachmentUrl}`
       await broadcastToGroups(groupIds, msg)
 
-      // แจ้งส่วนตัวครูแต่ละคน
-      const isAll = (payload.targetTeachers as string[] | undefined)?.includes('all')
       const { data: teachersRaw } = await db.from('teachers').select('id, name, line_user_id')
       const teachers = ((teachersRaw ?? []) as unknown as TeacherRow[])
       for (const t of teachers) {
         if (!t.line_user_id) continue
-        if (!isAll && !(payload.targetTeachers as string[] | undefined)?.includes(t.id)) continue
+        if (!isAll && !targetParts.includes(t.id)) continue
         await pushMessage(
           t.line_user_id,
-          `📬 คุณได้รับเอกสารใหม่\nเลขรับ: ${payload.docNo}\nเรื่อง: ${payload.title}\n${payload.urgent ? '⚠️ เอกสารด่วนมาก!\n' : ''}กรุณาเข้าระบบเพื่อดำเนินการ`
+          `📬 คุณได้รับเอกสารใหม่${docTypeLine}\nเลขรับ: ${payload.docNo}\nเรื่อง: ${payload.title}\n${payload.urgent ? '⚠️ เอกสารด่วนมาก!\n' : ''}กรุณาเข้าระบบเพื่อดำเนินการ`
         )
       }
     } else if (payload.action === 'clerk') {
@@ -139,9 +158,10 @@ export async function POST(req: NextRequest) {
         )
       }
     } else if (payload.action === 'director') {
+      const docTypeLine = payload.docType ? `\nประเภท: ${payload.docType}` : ''
       await broadcastToGroups(
         groupIds,
-        `✅ ผอ. อนุมัติเอกสารแล้ว\nเลขรับ: ${payload.docNo}\nเรื่อง: ${payload.title}`
+        `✅ ผอ. อนุมัติเอกสารแล้ว${docTypeLine}\nเลขรับ: ${payload.docNo}\nเรื่อง: ${payload.title}`
       )
       const { data: clerkRaw } = await db
         .from('settings')
@@ -152,7 +172,7 @@ export async function POST(req: NextRequest) {
       if (clerkSetting?.value) {
         await pushMessage(
           clerkSetting.value,
-          `📋 ผอ. อนุมัติเอกสารแล้ว รอแจกจ่าย\nเลขรับ: ${payload.docNo}\nเรื่อง: ${payload.title}`
+          `📋 ผอ. อนุมัติเอกสารแล้ว รอแจกจ่าย${docTypeLine}\nเลขรับ: ${payload.docNo}\nเรื่อง: ${payload.title}`
         )
       }
     }
