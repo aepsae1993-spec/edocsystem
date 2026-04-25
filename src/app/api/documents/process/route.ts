@@ -36,7 +36,6 @@ export async function POST(req: NextRequest) {
     const db = createServiceClient()
 
     let fileUrl: string = payload.existingFileUrl || ''
-    let attachmentUrl: string = payload.existingAttachmentUrl || ''
 
     if (payload.fileData) {
       fileUrl = await uploadViaDriveGAS(
@@ -45,13 +44,27 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    if (payload.attachmentData) {
-      attachmentUrl = await uploadViaDriveGAS(
-        payload.attachmentData,
-        payload.attachmentName || 'attachment',
-        payload.attachmentMimeType || 'application/octet-stream'
+    // Handle multiple attachments (new format: attachmentDataList)
+    const existingAttachUrls = (payload.existingAttachmentUrl as string || '')
+      .split('\n').filter(Boolean)
+    const newAttachUrls: string[] = []
+
+    if (Array.isArray(payload.attachmentDataList)) {
+      for (const item of payload.attachmentDataList as Array<{ data: string; name: string; mime: string }>) {
+        const url = await uploadViaDriveGAS(item.data, item.name, item.mime || 'application/octet-stream')
+        newAttachUrls.push(url)
+      }
+    } else if (payload.attachmentData) {
+      // Backward compat: single attachment from AdminEditModal
+      const url = await uploadViaDriveGAS(
+        payload.attachmentData as string,
+        (payload.attachmentName as string) || 'attachment',
+        (payload.attachmentMimeType as string) || 'application/octet-stream'
       )
+      newAttachUrls.push(url)
     }
+
+    const attachmentUrl = [...existingAttachUrls, ...newAttachUrls].join('\n')
 
     const statusMap: Record<string, string> = {
       clerk: 'รอ ผอ. พิจารณา',
@@ -122,16 +135,26 @@ export async function POST(req: NextRequest) {
       const targetParts = docTarget.split(',').map((s: string) => s.trim())
       const isAll = targetParts.includes('all') || targetParts.length === 0 || docTarget === ''
 
-      const urgentPrefix = payload.urgent ? '🔴 ด่วนมาก! ' : '🔔 '
-      const targetLabel = isAll ? 'ทุกคน' : targetParts.join(', ')
-      const docTypeLine = docType ? `\nประเภท: ${docType}` : ''
-      let msg = `${urgentPrefix}มีเอกสารแจกจ่าย${docTypeLine}\nเลขรับ: ${payload.docNo}\nเรื่อง: ${payload.title}\nแจ้งเตือน: ${targetLabel}\nหมายเหตุ: ${payload.note || '-'}`
-      if (fileUrl) msg += `\nเอกสาร: ${fileUrl}`
-      if (attachmentUrl) msg += `\nไฟล์แนบ: ${attachmentUrl}`
-      await broadcastToGroups(groupIds, msg)
-
+      // Fetch teachers once (for name lookup + push)
       const { data: teachersRaw } = await db.from('teachers').select('id, name, line_user_id')
       const teachers = ((teachersRaw ?? []) as unknown as TeacherRow[])
+      const teacherNameMap: Record<string, string> = {}
+      teachers.forEach(t => { teacherNameMap[t.id] = t.name })
+
+      const urgentPrefix = payload.urgent ? '🔴 ด่วนมาก! ' : '🔔 '
+      const targetLabel = isAll
+        ? 'ทุกคน'
+        : targetParts.map(id => teacherNameMap[id] || id).join(', ')
+      const docTypeLine = docType ? `\nประเภท: ${docType}` : ''
+      const attachParts = attachmentUrl.split('\n').filter(Boolean)
+
+      let msg = `${urgentPrefix}มีเอกสารแจกจ่าย${docTypeLine}\nเลขรับ: ${payload.docNo}\nเรื่อง: ${payload.title}\nแจ้งเตือน: ${targetLabel}\nหมายเหตุ: ${payload.note || '-'}`
+      if (fileUrl) msg += `\nเอกสาร: ${fileUrl}`
+      attachParts.forEach((u, i) => {
+        msg += `\nไฟล์แนบ${attachParts.length > 1 ? ` ${i + 1}` : ''}: ${u}`
+      })
+      await broadcastToGroups(groupIds, msg)
+
       for (const t of teachers) {
         if (!t.line_user_id) continue
         if (!isAll && !targetParts.includes(t.id)) continue
