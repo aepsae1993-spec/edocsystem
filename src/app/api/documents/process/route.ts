@@ -7,44 +7,16 @@ type GroupRow = { group_id: string }
 type SettingRow = { value: string }
 type DocRow = { target: string; doc_type: string }
 
-async function uploadViaDriveGAS(base64Data: string, fileName: string, mimeType = 'application/pdf'): Promise<string> {
-  const gasUrl = process.env.GAS_DRIVE_UPLOAD_URL
-  if (!gasUrl) throw new Error('GAS_DRIVE_UPLOAD_URL not configured')
-  const res = await fetch(gasUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ secret: process.env.GAS_SECRET_KEY, action: 'uploadFile', fileData: base64Data, fileName, mimeType }),
-  })
-  const json = await res.json()
-  if (!json.success) throw new Error(json.message || 'GAS upload failed')
-  return json.fileUrl as string
-}
-
 export async function POST(req: NextRequest) {
   try {
     const payload = await req.json()
     const db = createServiceClient()
 
-    let fileUrl: string = payload.existingFileUrl || ''
-    if (payload.fileData) {
-      fileUrl = await uploadViaDriveGAS(
-        payload.fileData,
-        payload.fileName || `EDOC_${String(payload.docNo).replace('/', '_')}.pdf`
-      )
-    }
-
-    const existingAttachUrls = (payload.existingAttachmentUrl as string || '').split('\n').filter(Boolean)
-    const newAttachUrls: string[] = []
-    if (Array.isArray(payload.attachmentDataList)) {
-      for (const item of payload.attachmentDataList as Array<{ data: string; name: string; mime: string }>) {
-        const url = await uploadViaDriveGAS(item.data, item.name, item.mime || 'application/octet-stream')
-        newAttachUrls.push(url)
-      }
-    } else if (payload.attachmentData) {
-      const url = await uploadViaDriveGAS(payload.attachmentData as string, (payload.attachmentName as string) || 'attachment', (payload.attachmentMimeType as string) || 'application/octet-stream')
-      newAttachUrls.push(url)
-    }
-    const attachmentUrl = [...existingAttachUrls, ...newAttachUrls].join('\n')
+    // Files are pre-uploaded via /api/upload — receive URLs only (no base64 here)
+    const fileUrl: string = (payload.fileUrl as string) || ''
+    const attachmentUrls: string[] = Array.isArray(payload.attachmentUrls)
+      ? (payload.attachmentUrls as string[]) : []
+    const attachmentUrl = attachmentUrls.join('\n')
 
     const statusMap: Record<string, string> = {
       clerk: 'รอ ผอ. พิจารณา',
