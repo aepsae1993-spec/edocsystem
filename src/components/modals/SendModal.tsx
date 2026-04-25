@@ -2,30 +2,43 @@
 import { useState } from 'react'
 import type { Teacher } from '@/types/database'
 
+const DOC_TYPES = ['ประชาสัมพันธ์', 'แจ้งให้ทราบ', 'พิจารณา', 'ดำเนินการ']
+
 interface Props {
   action: string
   teachers: Teacher[]
   initialTitle?: string
   initialNote?: string
+  currentDocTarget?: string
   onClose: () => void
   onSuccess: (payload: Record<string, unknown>) => void
 }
 
-export default function SendModal({ action, teachers, initialTitle = '', initialNote = '', onClose, onSuccess }: Props) {
+export default function SendModal({ action, teachers, initialTitle = '', initialNote = '', currentDocTarget = '', onClose, onSuccess }: Props) {
   const [title, setTitle] = useState(initialTitle)
   const [note, setNote] = useState(initialNote)
   const [selectedTeachers, setSelectedTeachers] = useState<string[]>([])
+  const [docType, setDocType] = useState('')
   const [urgent, setUrgent] = useState(false)
   const [attachFile, setAttachFile] = useState<File | null>(null)
 
   const titleMap: Record<string, string> = {
     clerk: 'ส่งให้ผู้อำนวยการพิจารณา',
-    director: 'อนุมัติและส่งกลับธุรการ',
-    distribute: 'แจกจ่ายเอกสารให้บุคลากร',
+    director: 'อนุมัติและกำหนดการแจกจ่าย',
+    distribute: 'ยืนยันแจกจ่ายเอกสาร',
   }
+
+  const targetLabel = (() => {
+    if (!currentDocTarget) return 'ทุกคน'
+    const parts = currentDocTarget.split(',').map(s => s.trim())
+    if (parts.includes('all') || parts.length === 0) return 'ทุกคน'
+    const names = parts.map(id => teachers.find(t => t.id === id)?.name || id).filter(Boolean).join(', ')
+    return names || 'ทุกคน'
+  })()
 
   async function handleSubmit() {
     if (!title.trim()) return alert('กรุณาระบุชื่อเรื่องของเอกสาร')
+    if (action === 'director' && !docType) return alert('กรุณาเลือกประเภทเอกสาร')
 
     let attachmentData: string | null = null
     let attachmentName: string | null = null
@@ -41,11 +54,15 @@ export default function SendModal({ action, teachers, initialTitle = '', initial
       attachmentMimeType = attachFile.type
     }
 
-    const targets = selectedTeachers.length === 0 ? [] : selectedTeachers
+    const notifyTarget = action === 'director'
+      ? (selectedTeachers.length > 0 ? selectedTeachers : ['all'])
+      : []
+
     onSuccess({
       title: title.trim(),
       note: note.trim(),
-      targetTeachers: action === 'distribute' ? (targets.length > 0 ? targets : ['all']) : [],
+      targetTeachers: notifyTarget,
+      docType: action === 'director' ? docType : undefined,
       urgent: urgent ? 'ด่วนมาก' : '',
       attachmentData,
       attachmentName,
@@ -70,24 +87,50 @@ export default function SendModal({ action, teachers, initialTitle = '', initial
         </div>
 
         <div className="p-6 flex flex-col gap-4 max-h-[70vh] overflow-y-auto">
-          {/* Title */}
-          <div className="flex flex-col gap-1.5">
-            <label className="font-semibold text-slate-700 text-sm">เรื่อง / ชื่อเอกสาร <span className="text-red-500">*</span></label>
-            <input
-              type="text"
-              value={title}
-              onChange={e => setTitle(e.target.value)}
-              className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition"
-              placeholder="ระบุชื่อเรื่อง..."
-            />
-          </div>
 
-          {/* Teacher select (distribute) */}
-          {action === 'distribute' && (
+          {/* Title - clerk and director */}
+          {(action === 'clerk' || action === 'director') && (
             <div className="flex flex-col gap-1.5">
-              <label className="font-semibold text-slate-700 text-sm">เลือกครูผู้รับ</label>
+              <label className="font-semibold text-slate-700 text-sm">เรื่อง / ชื่อเอกสาร <span className="text-red-500">*</span></label>
+              <input
+                type="text"
+                value={title}
+                onChange={e => setTitle(e.target.value)}
+                className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition"
+                placeholder="ระบุชื่อเรื่อง..."
+              />
+            </div>
+          )}
+
+          {/* Distribute: show title read-only */}
+          {action === 'distribute' && (
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl">
+              <p className="text-xs text-slate-400 font-semibold uppercase mb-1">เรื่อง</p>
+              <p className="text-sm font-semibold text-slate-800">{title}</p>
+            </div>
+          )}
+
+          {/* Doc type - director only */}
+          {action === 'director' && (
+            <div className="flex flex-col gap-1.5">
+              <label className="font-semibold text-slate-700 text-sm">ประเภทเอกสาร <span className="text-red-500">*</span></label>
+              <div className="grid grid-cols-2 gap-2">
+                {DOC_TYPES.map(t => (
+                  <label key={t} className={`flex items-center gap-2 p-3 rounded-xl border-2 cursor-pointer transition ${docType === t ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-slate-200 hover:bg-slate-50 text-slate-700'}`}>
+                    <input type="radio" name="docType" value={t} checked={docType === t} onChange={() => setDocType(t)} className="accent-indigo-600" />
+                    <span className="text-sm font-medium">{t}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Notify target - director only */}
+          {action === 'director' && (
+            <div className="flex flex-col gap-1.5">
+              <label className="font-semibold text-slate-700 text-sm">แจ้งเตือนใคร</label>
               <div className="border border-slate-200 rounded-xl overflow-hidden max-h-40 overflow-y-auto">
-                {[{ id: 'all', name: '📢 แจ้งเตือนทุกคน', department: '' }, ...teachers].map(t => (
+                {[{ id: 'all', name: '📢 ทุกคน', department: '' }, ...teachers].map(t => (
                   <label key={t.id} className="flex items-center gap-3 px-3 py-2 hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-0">
                     <input
                       type="checkbox"
@@ -99,7 +142,18 @@ export default function SendModal({ action, teachers, initialTitle = '', initial
                   </label>
                 ))}
               </div>
-              <p className="text-xs text-slate-400">ถ้าไม่เลือก = แจกจ่ายทุกคน</p>
+              <p className="text-xs text-slate-400">ถ้าไม่เลือก = แจ้งเตือนทุกคน</p>
+            </div>
+          )}
+
+          {/* Distribute: show who will be notified (read-only) */}
+          {action === 'distribute' && (
+            <div className="flex items-center gap-3 p-4 bg-indigo-50 border border-indigo-200 rounded-xl">
+              <span className="text-xl">📢</span>
+              <div>
+                <p className="text-xs text-indigo-500 font-semibold uppercase">จะแจ้งเตือน</p>
+                <p className="text-sm font-bold text-indigo-800">{targetLabel}</p>
+              </div>
             </div>
           )}
 
@@ -114,7 +168,7 @@ export default function SendModal({ action, teachers, initialTitle = '', initial
             />
           </div>
 
-          {/* Urgent */}
+          {/* Urgent - distribute only */}
           {action === 'distribute' && (
             <label className="flex items-center gap-3 p-4 bg-red-50 border border-red-200 rounded-xl cursor-pointer">
               <input type="checkbox" checked={urgent} onChange={e => setUrgent(e.target.checked)} className="w-5 h-5 accent-red-600" />
@@ -122,7 +176,7 @@ export default function SendModal({ action, teachers, initialTitle = '', initial
             </label>
           )}
 
-          {/* Attachment */}
+          {/* Attachment - clerk and distribute */}
           {(action === 'clerk' || action === 'distribute') && (
             <div className="flex flex-col gap-1.5 p-4 bg-indigo-50/50 border border-indigo-100 rounded-xl">
               <label className="font-semibold text-slate-700 text-sm">📎 ไฟล์แนบเพิ่มเติม</label>
