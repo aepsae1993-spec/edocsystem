@@ -24,6 +24,7 @@ export interface Document {
   target: string           // "all" or "t1,t2,t3"
   tracking_data: Record<string, string>  // {t1: "read", t2: "completed"}
   urgent: string
+  doc_type?: string
   created_at?: string
   updated_at?: string
 }
