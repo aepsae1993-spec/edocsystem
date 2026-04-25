@@ -56,6 +56,7 @@ export default function DashboardView() {
   const [teacherEditOpen, setTeacherEditOpen] = useState(false)
   const [teacherEditData, setTeacherEditData] = useState<{ mode: 'add' | 'edit'; data?: Record<string, unknown> } | null>(null)
   const [adminEditDoc, setAdminEditDoc] = useState<Document | null>(null)
+  const [distributeDoc, setDistributeDoc] = useState<Document | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => { loadTeachers() }, [loadTeachers])
@@ -243,6 +244,35 @@ export default function DashboardView() {
     window.open(fileUrl, '_blank', 'noreferrer')
   }
 
+  async function handleDistributeSuccess(doc: Document, payload: Record<string, unknown>) {
+    showLoading(true, 'กำลังแจกจ่ายเอกสาร...')
+    const body = {
+      ...payload,
+      action: 'distribute',
+      docId: doc.id,
+      docNo: doc.doc_no,
+      sender: currentUser?.name,
+      fileData: null,
+      existingFileUrl: doc.file_url || '',
+      existingAttachmentUrl: doc.attachment_url || '',
+      trackingData: JSON.stringify(doc.tracking_data || {}),
+    }
+    const res = await fetch('/api/documents/process', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const result = await res.json()
+    showLoading(false)
+    if (result.success) {
+      showToast('✅ แจกจ่ายเรียบร้อย!')
+      setDistributeDoc(null)
+      loadDashboard()
+    } else {
+      showToast('❌ ' + result.message, 'error')
+    }
+  }
+
   async function quickDelete(docId: string) {
     if (!confirm('ยืนยันลบเอกสารนี้?')) return
     showLoading(true, 'กำลังลบ...')
@@ -385,6 +415,7 @@ export default function DashboardView() {
             <DocumentTable
               docs={visibleDocs}
               isManageTab={isManageTab}
+              currentTab={currentTab}
               currentUser={currentUser}
               overdueMap={overdueMap}
               onOpen={openDocument}
@@ -394,6 +425,7 @@ export default function DashboardView() {
               onDelete={quickDelete}
               onTracking={setTrackingDoc}
               onEdit={setAdminEditDoc}
+              onDistribute={setDistributeDoc}
             />
           )}
         </div>
@@ -431,6 +463,17 @@ export default function DashboardView() {
           onSuccess={() => { setAdminEditDoc(null); loadDashboard() }}
         />
       )}
+      {distributeDoc && (
+        <SendModal
+          action="distribute"
+          teachers={allTeachers}
+          initialTitle={distributeDoc.title}
+          initialNote={distributeDoc.note}
+          currentDocTarget={distributeDoc.target || ''}
+          onClose={() => setDistributeDoc(null)}
+          onSuccess={(payload) => handleDistributeSuccess(distributeDoc, payload)}
+        />
+      )}
     </div>
   )
 }
@@ -438,9 +481,10 @@ export default function DashboardView() {
 // =============================================
 // DOCUMENT TABLE
 // =============================================
-function DocumentTable({ docs, isManageTab, currentUser, overdueMap, onOpen, onAck, onComplete, onRead, onDelete, onTracking, onEdit }: {
+function DocumentTable({ docs, isManageTab, currentTab, currentUser, overdueMap, onOpen, onAck, onComplete, onRead, onDelete, onTracking, onEdit, onDistribute }: {
   docs: Document[]
   isManageTab: boolean
+  currentTab: string
   currentUser: ReturnType<typeof useApp>['state']['currentUser']
   overdueMap: Record<string, number>
   onOpen: (doc: Document) => void
@@ -450,6 +494,7 @@ function DocumentTable({ docs, isManageTab, currentUser, overdueMap, onOpen, onA
   onDelete: (id: string) => void
   onTracking: (doc: Document) => void
   onEdit: (doc: Document) => void
+  onDistribute: (doc: Document) => void
 }) {
   if (docs.length === 0) return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-12 text-center text-slate-400">
@@ -498,11 +543,11 @@ function DocumentTable({ docs, isManageTab, currentUser, overdueMap, onOpen, onA
                       {isOverdue && <span className="text-xs font-bold text-red-600 bg-red-100 border border-red-200 px-2 py-0.5 rounded-full">🔥 ค้าง {isOverdue} ชม.</span>}
                     </div>
                     {doc.note && <div className="text-xs text-amber-600 mt-0.5">📝 {doc.note}</div>}
-                    {doc.attachment_url && (
-                      <a href={doc.attachment_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 hover:underline mt-0.5">
-                        📎 เอกสารเพิ่มเติม
+                    {doc.attachment_url && doc.attachment_url.split('\n').filter(Boolean).map((url, i, arr) => (
+                      <a key={i} href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 hover:underline mt-0.5 mr-2">
+                        📎 {arr.length > 1 ? `เอกสารเพิ่มเติม ${i + 1}` : 'เอกสารเพิ่มเติม'}
                       </a>
-                    )}
+                    ))}
                   </td>
                   <td className="p-3 sm:p-4 text-slate-500 text-sm hidden sm:table-cell">{doc.sender}</td>
                   <td className="p-3 sm:p-4">
@@ -517,6 +562,10 @@ function DocumentTable({ docs, isManageTab, currentUser, overdueMap, onOpen, onA
                         </>
                       ) : (
                         <>
+                          {/* ปุ่มแจกจ่ายนอก canvas สำหรับ clerk-distribute */}
+                          {currentUser?.role === 'clerk' && currentTab === 'clerk-distribute' && doc.status.includes('อนุมัติแล้ว') && (
+                            <button onClick={() => onDistribute(doc)} className="px-2.5 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-xs font-bold transition shadow-sm">📢 แจกจ่าย</button>
+                          )}
                           {doc.status.includes('แจกจ่าย') && currentUser?.role !== 'teacher' && (
                             <button onClick={() => onTracking(doc)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg hover:bg-slate-100 text-xs font-semibold text-slate-600 transition">📊 ติดตาม</button>
                           )}
