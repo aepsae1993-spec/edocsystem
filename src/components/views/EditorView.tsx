@@ -194,7 +194,7 @@ export default function EditorView() {
           const scale = imgObj.width > targetW ? targetW / imgObj.width : 1
           fCanvas.setWidth(imgObj.width * scale)
           fCanvas.setHeight(imgObj.height * scale)
-          fabric.Image.fromURL(dataUrl, (img: object) => {
+          fabric.Image.fromURL(dataUrl as string, (img: object) => {
             fCanvas.setBackgroundImage(img, fCanvas.renderAll.bind(fCanvas), {
               scaleX: fCanvas.width / (img as { width: number }).width,
               scaleY: fCanvas.height / (img as { height: number }).height,
@@ -203,7 +203,7 @@ export default function EditorView() {
             r()
           })
         }
-        imgObj.src = dataUrl
+        imgObj.src = dataUrl as string
       })
 
       fCanvas.on('path:created', () => { canvasEditedRef.current = true })
