@@ -35,6 +35,7 @@ export default function EditorView() {
   const [sendModalOpen, setSendModalOpen] = useState(false)
   const [sendAction, setSendAction] = useState('')
   const [stampGalleryOpen, setStampGalleryOpen] = useState(false)
+  const [customDocNo, setCustomDocNo] = useState('')
   const [savedStamps, setSavedStamps] = useState<{ name: string; data: string }[]>([])
   const [libsLoaded, setLibsLoaded] = useState(false)
 
@@ -196,7 +197,8 @@ export default function EditorView() {
       const mime = sessionStorage.getItem('pendingFileMime') || 'application/pdf'
       if (pending) {
         canvasEditedRef.current = true
-        renderFileToEditor(pending, mime, newGeneratedDocNo)
+        setCustomDocNo(newGeneratedDocNo)
+        renderFileToEditor(pending, mime)
         sessionStorage.removeItem('pendingFile')
         sessionStorage.removeItem('pendingFileName')
         sessionStorage.removeItem('pendingFileMime')
@@ -339,7 +341,7 @@ export default function EditorView() {
         fileData = await exportCanvasToPdfBase64()
       }
 
-      const docNo = currentDoc ? currentDoc.doc_no : newGeneratedDocNo
+      const docNo = customDocNo || (currentDoc ? currentDoc.doc_no : newGeneratedDocNo)
       const body = {
         ...payload,
         action: sendAction,
@@ -432,7 +434,7 @@ export default function EditorView() {
   // EDITOR HEADER BUTTONS — per role
   // =============================================
   const isNewDoc = !currentDoc
-  const docNo = currentDoc?.doc_no || newGeneratedDocNo
+  const docNo = customDocNo || currentDoc?.doc_no || newGeneratedDocNo
   const docTracking = currentDoc?.tracking_data || {}
   const myTrackStatus = currentUser?.role === 'teacher' ? docTracking[currentUser.id!] : undefined
 
@@ -450,9 +452,29 @@ export default function EditorView() {
               <span className="hidden sm:inline">กลับ</span>
             </button>
             <div className="flex items-center gap-2 border-l border-slate-300 pl-2 sm:pl-4 min-w-0">
-              <span className="text-sm font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-200 truncate">
-                เลขรับ: {docNo}
-              </span>
+              {currentUser?.role === 'clerk' && isNewDoc ? (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-slate-500 shrink-0">เลขรับ:</span>
+                  <input
+                    type="text"
+                    value={customDocNo}
+                    onChange={e => setCustomDocNo(e.target.value)}
+                    className="w-28 sm:w-36 text-sm font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-300 focus:outline-none focus:border-indigo-500"
+                    placeholder="001/2569"
+                  />
+                  <button
+                    onClick={() => { if (customDocNo.trim()) addAutoRunningText(canvasesRef.current[0]?.canvas, customDocNo.trim()) }}
+                    className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-1 rounded-lg font-bold transition whitespace-nowrap"
+                    title="ประทับเลขรับบนเอกสาร"
+                  >
+                    🔢 ประทับ
+                  </button>
+                </div>
+              ) : (
+                <span className="text-sm font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-200 truncate">
+                  เลขรับ: {docNo}
+                </span>
+              )}
             </div>
           </div>
 
