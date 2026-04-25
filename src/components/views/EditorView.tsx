@@ -551,6 +551,7 @@ export default function EditorView() {
           teachers={allTeachers}
           initialTitle={currentDoc?.title || ''}
           initialNote={currentDoc?.note || ''}
+          currentDocTarget={currentDoc?.target || ''}
           onClose={() => setSendModalOpen(false)}
           onSuccess={handleSendModalSuccess}
         />
