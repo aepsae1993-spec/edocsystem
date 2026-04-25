@@ -233,6 +233,16 @@ export default function DashboardView() {
     loadDashboard()
   }
 
+  async function quickRead(docId: string, fileUrl: string) {
+    const doc = allDocs.find(d => d.id === docId)
+    const currentStatus = doc?.tracking_data?.[currentUser!.id!]
+    if (!currentStatus) {
+      await fetch('/api/tracking', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ docId, userId: currentUser!.id, status: 'read' }) })
+      loadDashboard()
+    }
+    window.open(fileUrl, '_blank', 'noreferrer')
+  }
+
   async function quickDelete(docId: string) {
     if (!confirm('ยืนยันลบเอกสารนี้?')) return
     showLoading(true, 'กำลังลบ...')
@@ -380,6 +390,7 @@ export default function DashboardView() {
               onOpen={openDocument}
               onAck={quickAcknowledge}
               onComplete={quickComplete}
+              onRead={quickRead}
               onDelete={quickDelete}
               onTracking={setTrackingDoc}
               onEdit={setAdminEditDoc}
@@ -427,7 +438,7 @@ export default function DashboardView() {
 // =============================================
 // DOCUMENT TABLE
 // =============================================
-function DocumentTable({ docs, isManageTab, currentUser, overdueMap, onOpen, onAck, onComplete, onDelete, onTracking, onEdit }: {
+function DocumentTable({ docs, isManageTab, currentUser, overdueMap, onOpen, onAck, onComplete, onRead, onDelete, onTracking, onEdit }: {
   docs: Document[]
   isManageTab: boolean
   currentUser: ReturnType<typeof useApp>['state']['currentUser']
@@ -435,6 +446,7 @@ function DocumentTable({ docs, isManageTab, currentUser, overdueMap, onOpen, onA
   onOpen: (doc: Document) => void
   onAck: (id: string) => void
   onComplete: (id: string) => void
+  onRead: (id: string, url: string) => void
   onDelete: (id: string) => void
   onTracking: (doc: Document) => void
   onEdit: (doc: Document) => void
@@ -481,10 +493,16 @@ function DocumentTable({ docs, isManageTab, currentUser, overdueMap, onOpen, onA
                   <td className="p-3 sm:p-4">
                     <div className="font-medium text-slate-800 text-sm sm:text-base flex flex-wrap items-center gap-1">
                       {doc.urgent && <span className="text-xs font-bold text-white bg-red-600 px-2 py-0.5 rounded-full animate-pulse">🔴 ด่วนมาก</span>}
+                      {doc.doc_type && <span className="text-xs font-semibold text-purple-700 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-full">{doc.doc_type}</span>}
                       {doc.title}
                       {isOverdue && <span className="text-xs font-bold text-red-600 bg-red-100 border border-red-200 px-2 py-0.5 rounded-full">🔥 ค้าง {isOverdue} ชม.</span>}
                     </div>
-                    {doc.note && currentUser?.role !== 'teacher' && <div className="text-xs text-amber-600 mt-0.5">📝 {doc.note}</div>}
+                    {doc.note && <div className="text-xs text-amber-600 mt-0.5">📝 {doc.note}</div>}
+                    {doc.attachment_url && (
+                      <a href={doc.attachment_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 hover:underline mt-0.5">
+                        📎 เอกสารเพิ่มเติม
+                      </a>
+                    )}
                   </td>
                   <td className="p-3 sm:p-4 text-slate-500 text-sm hidden sm:table-cell">{doc.sender}</td>
                   <td className="p-3 sm:p-4">
@@ -512,7 +530,7 @@ function DocumentTable({ docs, isManageTab, currentUser, overdueMap, onOpen, onA
                             <button onClick={() => onComplete(doc.id)} className="px-2.5 py-1.5 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 text-xs font-bold transition shadow-sm">✅ เสร็จสิ้น</button>
                           )}
                           {currentUser?.role === 'teacher' && doc.file_url && (
-                            <a href={doc.file_url} target="_blank" rel="noreferrer" className="px-2.5 py-1.5 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 text-xs font-semibold text-blue-700 transition">📂 เปิด</a>
+                            <button onClick={() => onRead(doc.id, doc.file_url)} className="px-2.5 py-1.5 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 text-xs font-semibold text-blue-700 transition">📂 เปิดอ่าน</button>
                           )}
                           {currentUser?.role !== 'teacher' && (
                             <button onClick={() => onOpen(doc)} className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg hover:bg-indigo-50 hover:border-indigo-300 text-xs font-semibold text-slate-700 hover:text-indigo-700 transition">📄 เปิด</button>
