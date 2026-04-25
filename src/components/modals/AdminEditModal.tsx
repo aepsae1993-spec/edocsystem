@@ -77,8 +77,11 @@ export default function AdminEditModal({ doc, teachers, onClose, onSuccess }: Pr
         </div>
         <div className="p-6 flex flex-col gap-4 max-h-[65vh] overflow-y-auto">
           <div className="flex flex-col gap-1.5">
-            <label className="font-semibold text-slate-700 text-sm">เลขรับหนังสือ</label>
-            <input value={docNo} onChange={e => setDocNo(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+            <label className="font-semibold text-slate-700 text-sm">เลขรับ / เลขคำสั่ง</label>
+            <div className="flex gap-2">
+              <input value={docNo} onChange={e => setDocNo(e.target.value)} className="flex-1 bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+              <button type="button" onClick={() => setDocNo('')} className="px-3 py-2 bg-red-50 border border-red-200 rounded-xl text-xs font-semibold text-red-600 hover:bg-red-100 transition whitespace-nowrap">🗑️ ล้าง</button>
+            </div>
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="font-semibold text-slate-700 text-sm">ชื่อเอกสาร</label>
