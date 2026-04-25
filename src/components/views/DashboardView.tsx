@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Image from 'next/image'
 import { useApp } from '@/lib/store'
+import { uploadToGAS } from '@/lib/gasUpload'
 import type { Document, TeacherSummary } from '@/types/database'
 import SendModal from '../modals/SendModal'
 import TrackingModal from '../modals/TrackingModal'
@@ -246,18 +247,32 @@ export default function DashboardView() {
 
   async function handleDistributeSuccess(doc: Document, payload: Record<string, unknown>) {
     showLoading(true, 'กำลังแจกจ่ายเอกสาร...')
-    const body = {
-      ...payload,
-      action: 'distribute',
-      docId: doc.id,
-      docNo: doc.doc_no,
-      sender: currentUser?.name,
-      fileData: null,
-      existingFileUrl: doc.file_url || '',
-      existingAttachmentUrl: doc.attachment_url || '',
-      trackingData: JSON.stringify(doc.tracking_data || {}),
-    }
     try {
+      // Upload attachment files directly to GAS (bypass Vercel limit)
+      const attachmentUrls: string[] = doc.attachment_url
+        ? doc.attachment_url.split('\n').filter(Boolean)
+        : []
+      const attachmentDataList = (payload.attachmentDataList as Array<{ data: string; name: string; mime: string }>) || []
+      for (let i = 0; i < attachmentDataList.length; i++) {
+        const item = attachmentDataList[i]
+        showLoading(true, `กำลังอัพโหลดไฟล์แนบ ${i + 1}/${attachmentDataList.length}...`)
+        const url = await uploadToGAS(item.data, item.name, item.mime || 'application/octet-stream')
+        attachmentUrls.push(url)
+      }
+
+      const { attachmentDataList: _a, ...restPayload } = payload
+      void _a
+      const body = {
+        ...restPayload,
+        action: 'distribute',
+        docId: doc.id,
+        docNo: doc.doc_no,
+        sender: currentUser?.name,
+        fileUrl: doc.file_url || '',
+        attachmentUrls,
+        trackingData: JSON.stringify(doc.tracking_data || {}),
+      }
+
       const res = await fetch('/api/documents/process', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -269,8 +284,7 @@ export default function DashboardView() {
         result = JSON.parse(text)
       } catch {
         showLoading(false)
-        if (res.status === 413) showToast('❌ ไฟล์ใหญ่เกินไป กรุณาลดขนาดไฟล์ก่อนส่ง', 'error')
-        else showToast(`❌ เซิร์ฟเวอร์ตอบกลับผิดพลาด (${res.status})`, 'error')
+        showToast(`❌ เซิร์ฟเวอร์ตอบกลับผิดพลาด (${res.status})`, 'error')
         return
       }
       showLoading(false)
