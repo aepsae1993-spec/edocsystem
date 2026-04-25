@@ -330,63 +330,85 @@ export default function EditorView() {
     if (canvasesRef.current.length === 0) return null
     const { jspdf } = window
     const { jsPDF } = jspdf
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let pdf: any = null
+
+    // Phase 1: render all pages to hi-res HTMLCanvasElements once
+    type HiResPage = { el: HTMLCanvasElement; w: number; h: number }
+    const hiResPages: HiResPage[] = []
 
     for (let i = 0; i < canvasesRef.current.length; i++) {
-      showLoading(true, `กำลังสร้าง PDF หน้า ${i + 1}/${canvasesRef.current.length}...`)
-      await new Promise(r => setTimeout(r, 50))
+      showLoading(true, `กำลังเตรียมหน้า ${i + 1}/${canvasesRef.current.length}...`)
+      await new Promise(r => setTimeout(r, 30))
       const { canvas } = canvasesRef.current[i]
       canvas.discardActiveObject()
 
-      let imgData: string
-      let exportW: number
-      let exportH: number
+      let hiResC: HTMLCanvasElement
+      let w: number, h: number
 
       if (pdfDocRef.current && pageScalesRef.current[i] !== undefined) {
-        // Re-render PDF page at 2x from original for full quality
         const page = await pdfDocRef.current.getPage(i + 1)
         const hiResScale = pageScalesRef.current[i] * 2.0
         const hiResVp = page.getViewport({ scale: hiResScale })
-        exportW = hiResVp.width
-        exportH = hiResVp.height
-
-        const hiResC = document.createElement('canvas')
-        hiResC.width = exportW
-        hiResC.height = exportH
+        w = hiResVp.width; h = hiResVp.height
+        hiResC = document.createElement('canvas')
+        hiResC.width = w; hiResC.height = h
         await page.render({ canvasContext: hiResC.getContext('2d')!, viewport: hiResVp }).promise
 
-        // Get annotations only (without background) at 2x
+        // Composite annotations (without background) on top of hi-res PDF
         const origBg = canvas.backgroundImage
         canvas.backgroundImage = null
         canvas.renderAll()
         const annotData = canvas.toDataURL({ format: 'png', multiplier: 2.0 })
         canvas.backgroundImage = origBg
         canvas.renderAll()
-
-        // Composite annotations on top of hi-res PDF
-        const ctx = hiResC.getContext('2d')!
         await new Promise<void>(resolve => {
-          const annotImg = new Image()
-          annotImg.onload = () => { ctx.drawImage(annotImg, 0, 0, exportW, exportH); resolve() }
-          annotImg.src = annotData
+          const img = new Image()
+          img.onload = () => { hiResC.getContext('2d')!.drawImage(img, 0, 0, w, h); resolve() }
+          img.src = annotData
         })
-        imgData = hiResC.toDataURL('image/jpeg', 0.88)
       } else {
-        // Image file: use fabric canvas at 2x directly
+        // Image file: draw fabric canvas at 2x to temp HTMLCanvasElement
+        w = canvas.width * 2; h = canvas.height * 2
+        hiResC = document.createElement('canvas')
+        hiResC.width = w; hiResC.height = h
         canvas.renderAll()
-        const exportMultiplier = 2.0
-        imgData = canvas.toDataURL({ format: 'jpeg', quality: 0.88, multiplier: exportMultiplier })
-        exportW = canvas.width * exportMultiplier
-        exportH = canvas.height * exportMultiplier
+        await new Promise<void>(resolve => {
+          const img = new Image()
+          img.onload = () => { hiResC.getContext('2d')!.drawImage(img, 0, 0, w, h); resolve() }
+          img.src = canvas.toDataURL({ format: 'png', multiplier: 2.0 })
+        })
       }
 
-      const orientation = exportW > exportH ? 'l' : 'p'
-      if (i === 0) pdf = new jsPDF(orientation, 'pt', [exportW, exportH])
-      else pdf.addPage([exportW, exportH], orientation)
-      pdf.addImage(imgData, 'JPEG', 0, 0, exportW, exportH, undefined, 'FAST')
+      hiResPages.push({ el: hiResC, w, h })
     }
-    return pdf ? pdf.output('datauristring').split(',')[1] : null
+
+    // Phase 2: try quality levels until size fits (JPEG encode is fast — no re-render needed)
+    const MAX_B64 = 3.5 * 1024 * 1024 // 3.5MB → safe under Vercel 4.5MB limit
+    const qualitySteps = [0.88, 0.75, 0.60, 0.45]
+
+    for (let qi = 0; qi < qualitySteps.length; qi++) {
+      const quality = qualitySteps[qi]
+      showLoading(true, qi === 0
+        ? 'กำลังสร้าง PDF...'
+        : `กำลังลดขนาดอัตโนมัติ (คุณภาพ ${Math.round(quality * 100)}%)...`)
+      await new Promise(r => setTimeout(r, 30))
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let pdf: any = null
+      for (const { el, w, h } of hiResPages) {
+        const imgData = el.toDataURL('image/jpeg', quality)
+        const orientation = w > h ? 'l' : 'p'
+        if (!pdf) pdf = new jsPDF(orientation, 'pt', [w, h])
+        else pdf.addPage([w, h], orientation)
+        pdf.addImage(imgData, 'JPEG', 0, 0, w, h, undefined, 'FAST')
+      }
+
+      const b64: string = pdf.output('datauristring').split(',')[1]
+      if (b64.length <= MAX_B64 || qi === qualitySteps.length - 1) {
+        if (qi > 0) showToast(`⚠️ ลดขนาดไฟล์อัตโนมัติ (คุณภาพ ${Math.round(quality * 100)}%) เพื่อให้ส่งได้`)
+        return b64
+      }
+    }
+    return null
   }
 
   // =============================================
