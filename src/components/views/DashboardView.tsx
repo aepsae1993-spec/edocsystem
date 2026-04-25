@@ -257,19 +257,33 @@ export default function DashboardView() {
       existingAttachmentUrl: doc.attachment_url || '',
       trackingData: JSON.stringify(doc.tracking_data || {}),
     }
-    const res = await fetch('/api/documents/process', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    const result = await res.json()
-    showLoading(false)
-    if (result.success) {
-      showToast('✅ แจกจ่ายเรียบร้อย!')
-      setDistributeDoc(null)
-      loadDashboard()
-    } else {
-      showToast('❌ ' + result.message, 'error')
+    try {
+      const res = await fetch('/api/documents/process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const text = await res.text()
+      let result: { success: boolean; message?: string }
+      try {
+        result = JSON.parse(text)
+      } catch {
+        showLoading(false)
+        if (res.status === 413) showToast('❌ ไฟล์ใหญ่เกินไป กรุณาลดขนาดไฟล์ก่อนส่ง', 'error')
+        else showToast(`❌ เซิร์ฟเวอร์ตอบกลับผิดพลาด (${res.status})`, 'error')
+        return
+      }
+      showLoading(false)
+      if (result.success) {
+        showToast('✅ แจกจ่ายเรียบร้อย!')
+        setDistributeDoc(null)
+        loadDashboard()
+      } else {
+        showToast('❌ ' + result.message, 'error')
+      }
+    } catch (e) {
+      showLoading(false)
+      showToast('❌ เกิดข้อผิดพลาด: ' + String(e), 'error')
     }
   }
 
