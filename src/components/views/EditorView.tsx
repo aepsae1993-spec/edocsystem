@@ -421,22 +421,52 @@ export default function EditorView() {
     try {
       const docNo = customDocNo || (currentDoc ? currentDoc.doc_no : newGeneratedDocNo)
 
-      let fileData: string | null = null
+      // 1. Upload canvas PDF (separate request — no size accumulation)
+      let fileUrl = currentDoc?.file_url || ''
       const isNewDoc = sendAction === 'clerk' && !currentDoc
       if (isNewDoc || canvasEditedRef.current) {
-        fileData = await exportCanvasToPdfBase64()
+        const fileData = await exportCanvasToPdfBase64()
+        if (fileData) {
+          showLoading(true, 'กำลังอัพโหลด PDF...')
+          const up = await fetch('/api/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fileData, fileName: `EDOC_${docNo.replace('/', '_')}.pdf`, mimeType: 'application/pdf' }),
+          })
+          const upResult = await up.json()
+          if (!upResult.success) throw new Error(upResult.message)
+          fileUrl = upResult.fileUrl
+        }
       }
 
+      // 2. Upload each attachment separately
+      const attachmentUrls: string[] = currentDoc?.attachment_url
+        ? currentDoc.attachment_url.split('\n').filter(Boolean) : []
+      const attachmentDataList = (payload.attachmentDataList as Array<{ data: string; name: string; mime: string }>) || []
+      for (let i = 0; i < attachmentDataList.length; i++) {
+        const item = attachmentDataList[i]
+        showLoading(true, `กำลังอัพโหลดไฟล์แนบ ${i + 1}/${attachmentDataList.length}...`)
+        const up = await fetch('/api/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileData: item.data, fileName: item.name, mimeType: item.mime || 'application/octet-stream' }),
+        })
+        const upResult = await up.json()
+        if (!upResult.success) throw new Error(upResult.message)
+        attachmentUrls.push(upResult.fileUrl)
+      }
+
+      // 3. Send only URLs to process — tiny payload, no base64
+      const { attachmentDataList: _a, ...restPayload } = payload
+      void _a
       const body = {
-        ...payload,
+        ...restPayload,
         action: sendAction,
         docId: currentDoc?.id || null,
         docNo,
         sender: currentUser?.name,
-        fileData,
-        fileName: `EDOC_${docNo.replace('/', '_')}.pdf`,
-        existingFileUrl: currentDoc?.file_url || '',
-        existingAttachmentUrl: currentDoc?.attachment_url || '',
+        fileUrl,
+        attachmentUrls,
         trackingData: currentDoc ? JSON.stringify(currentDoc.tracking_data) : null,
       }
 
