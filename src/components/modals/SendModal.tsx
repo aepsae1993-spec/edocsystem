@@ -20,7 +20,7 @@ export default function SendModal({ action, teachers, initialTitle = '', initial
   const [selectedTeachers, setSelectedTeachers] = useState<string[]>([])
   const [docType, setDocType] = useState('')
   const [urgent, setUrgent] = useState(false)
-  const [attachFile, setAttachFile] = useState<File | null>(null)
+  const [attachFiles, setAttachFiles] = useState<File[]>([])
 
   const titleMap: Record<string, string> = {
     clerk: 'ส่งให้ผู้อำนวยการพิจารณา',
@@ -40,18 +40,14 @@ export default function SendModal({ action, teachers, initialTitle = '', initial
     if (!title.trim()) return alert('กรุณาระบุชื่อเรื่องของเอกสาร')
     if (action === 'director' && !docType) return alert('กรุณาเลือกประเภทเอกสาร')
 
-    let attachmentData: string | null = null
-    let attachmentName: string | null = null
-    let attachmentMimeType: string | null = null
-
-    if (attachFile) {
-      attachmentData = await new Promise(res => {
+    const attachmentDataList: Array<{ data: string; name: string; mime: string }> = []
+    for (const file of attachFiles) {
+      const data = await new Promise<string>(res => {
         const r = new FileReader()
         r.onload = e => res((e.target?.result as string).split(',')[1])
-        r.readAsDataURL(attachFile)
+        r.readAsDataURL(file)
       })
-      attachmentName = attachFile.name
-      attachmentMimeType = attachFile.type
+      attachmentDataList.push({ data, name: file.name, mime: file.type })
     }
 
     const notifyTarget = action === 'director'
@@ -64,9 +60,7 @@ export default function SendModal({ action, teachers, initialTitle = '', initial
       targetTeachers: notifyTarget,
       docType: action === 'director' ? docType : undefined,
       urgent: urgent ? 'ด่วนมาก' : '',
-      attachmentData,
-      attachmentName,
-      attachmentMimeType,
+      attachmentDataList,
     })
   }
 
@@ -179,12 +173,23 @@ export default function SendModal({ action, teachers, initialTitle = '', initial
           {/* Attachment - clerk and distribute */}
           {(action === 'clerk' || action === 'distribute') && (
             <div className="flex flex-col gap-1.5 p-4 bg-indigo-50/50 border border-indigo-100 rounded-xl">
-              <label className="font-semibold text-slate-700 text-sm">📎 ไฟล์แนบเพิ่มเติม</label>
+              <label className="font-semibold text-slate-700 text-sm">📎 ไฟล์แนบเพิ่มเติม <span className="text-xs font-normal text-slate-400">(เลือกได้หลายไฟล์)</span></label>
               <input
                 type="file"
-                onChange={e => setAttachFile(e.target.files?.[0] || null)}
+                multiple
+                onChange={e => setAttachFiles(e.target.files ? Array.from(e.target.files) : [])}
                 className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-bold file:bg-indigo-600 file:text-white hover:file:bg-indigo-700 cursor-pointer"
               />
+              {attachFiles.length > 0 && (
+                <ul className="mt-1 flex flex-col gap-1">
+                  {attachFiles.map((f, i) => (
+                    <li key={i} className="text-xs text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-1 rounded-lg flex items-center justify-between">
+                      <span>📄 {f.name}</span>
+                      <button type="button" onClick={() => setAttachFiles(prev => prev.filter((_, idx) => idx !== i))} className="text-red-400 hover:text-red-600 ml-2">&times;</button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           )}
         </div>
