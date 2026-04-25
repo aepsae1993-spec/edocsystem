@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Image from 'next/image'
 import { useApp } from '@/lib/store'
 import { uploadToGAS } from '@/lib/gasUpload'
+import { setPendingFile } from '@/lib/pendingFile'
 import type { Document, TeacherSummary } from '@/types/database'
 import SendModal from '../modals/SendModal'
 import TrackingModal from '../modals/TrackingModal'
@@ -318,16 +319,9 @@ export default function DashboardView() {
     const { docNo } = await res.json()
     dispatch({ type: 'SET_NEW_DOC_NO', payload: docNo })
     dispatch({ type: 'SET_CURRENT_DOC', payload: null })
-    // เก็บ file ใน sessionStorage เพื่อให้ EditorView ดึงไปใช้
-    const reader = new FileReader()
-    reader.onload = ev => {
-      sessionStorage.setItem('pendingFile', ev.target?.result as string)
-      sessionStorage.setItem('pendingFileName', file.name)
-      sessionStorage.setItem('pendingFileMime', file.type)
-      showLoading(false)
-      dispatch({ type: 'SET_VIEW', payload: 'editor' })
-    }
-    reader.readAsDataURL(file)
+    setPendingFile(file)
+    showLoading(false)
+    dispatch({ type: 'SET_VIEW', payload: 'editor' })
     e.target.value = ''
   }
 
