@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useApp } from '@/lib/store'
 import { uploadToGAS } from '@/lib/gasUpload'
+import { getPendingFile, clearPendingFile } from '@/lib/pendingFile'
 import SendModal from '../modals/SendModal'
 
 declare global {
@@ -93,7 +94,7 @@ export default function EditorView() {
   // RENDER FILE TO CANVAS
   // =============================================
   const renderFileToEditor = useCallback(async (
-    dataUrl: string,
+    dataUrl: string | ArrayBuffer,
     mimeType: string,
     autoNumber?: string
   ) => {
@@ -102,16 +103,22 @@ export default function EditorView() {
     containerRef.current.innerHTML = ''
     canvasesRef.current = []
 
-    const isPdf = mimeType === 'application/pdf' || dataUrl.includes('data:application/pdf')
+    const isPdf = mimeType === 'application/pdf' || (typeof dataUrl === 'string' && dataUrl.includes('data:application/pdf'))
 
     if (isPdf) {
-      // base64 → ArrayBuffer
-      const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl
-      const binary = atob(base64)
-      const bytes = new Uint8Array(binary.length)
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+      let buffer: ArrayBuffer
+      if (dataUrl instanceof ArrayBuffer) {
+        buffer = dataUrl
+      } else {
+        // base64 → ArrayBuffer
+        const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl
+        const binary = atob(base64)
+        const bytes = new Uint8Array(binary.length)
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+        buffer = bytes.buffer
+      }
 
-      const pdfDoc = await pdfjsLib.getDocument(bytes.buffer).promise
+      const pdfDoc = await pdfjsLib.getDocument(buffer).promise
       pdfDocRef.current = pdfDoc
       pageScalesRef.current = []
 
@@ -212,16 +219,13 @@ export default function EditorView() {
     if (!libsLoaded) return
 
     if (!currentDoc) {
-      // New doc — load from sessionStorage
-      const pending = sessionStorage.getItem('pendingFile')
-      const mime = sessionStorage.getItem('pendingFileMime') || 'application/pdf'
-      if (pending) {
+      // New doc — load File from memory (no sessionStorage size limit)
+      const pendingFile = getPendingFile()
+      if (pendingFile) {
+        clearPendingFile()
         canvasEditedRef.current = true
         setCustomDocNo(newGeneratedDocNo)
-        renderFileToEditor(pending, mime)
-        sessionStorage.removeItem('pendingFile')
-        sessionStorage.removeItem('pendingFileName')
-        sessionStorage.removeItem('pendingFileMime')
+        pendingFile.arrayBuffer().then(buf => renderFileToEditor(buf, pendingFile.type || 'application/pdf'))
       }
     } else {
       // Existing doc — fetch base64 from server via GAS
